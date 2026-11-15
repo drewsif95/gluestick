@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en" class="booting">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#131214" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f3ee" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Gluestick</title>
+<script>setTimeout(function(){document.documentElement.classList.remove("booting")},4000)</script>
+<link rel="stylesheet" href="fonts.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-title" content="Gluestick">
+<style>
+:root{
+  /* Layout: a darkroom. The collage is the only light source and the chrome recedes.
+     Controls sit in a thumb-reach tray under the canvas, which becomes a sidebar on wide screens. */
+  --bg:#131214;
+  --surface:#1b191c;
+  --raise:#262327;
+  --line:#353137;
+  --ink:#f2ece4;
+  --muted:#a39aa0;
+  --accent:#ff6b3d;
+  --accent-ink:#1d0c05;
+  --stage-glow:#211e22;
+  --frame-shadow:0 22px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);
+  --pill-bg:rgba(27,25,28,.92);
+  --chip:#3d383f;
+  --dash:#5d555c;
+  --ring:rgba(255,255,255,.24);
+  --ring-soft:rgba(255,255,255,.1);
+  --danger:#ff9a8f;
+  --placeholder:#7f777d;
+  --scrim:rgba(6,5,6,.7);
+  --well:#0d0c0e;
+  --font-display:"Instrument Serif", Georgia, "Times New Roman", serif;
+  --font-brand:"Bricolage Grotesque", "Figtree", -apple-system, sans-serif;
+  /* Notch and home-indicator insets: zero in a browser or inside Claude, real values in the iPhone app. */
+  --safe-t:env(safe-area-inset-top, 0px);
+  --safe-b:env(safe-area-inset-bottom, 0px);
+  --safe-l:env(safe-area-inset-left, 0px);
+  --safe-r:env(safe-area-inset-right, 0px);
+  --font-ui:"Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color-scheme:dark;
+}
+/* Light mode follows the phone: the cream, ink and orange of the Gluestick brand board.
+   Photos sit on a soft warm white rather than pure white so their colours still read true. */
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f6f3ee;
+    --surface:#fffdf9;
+    --raise:#efe9e1;
+    --line:#e2dbd2;
+    --ink:#1a1819;
+    --muted:#665e63;
+    --stage-glow:#fffdf9;
+    --frame-shadow:0 18px 44px rgba(60,40,25,.16),0 0 0 1px rgba(26,24,25,.06);
+    --pill-bg:rgba(255,253,249,.94);
+    --chip:#d9d1c7;
+    --dash:#b9b0a6;
+    --ring:rgba(26,24,25,.16);
+    --ring-soft:rgba(26,24,25,.1);
+    --danger:#c23a28;
+    --placeholder:#8a8186;
+    --scrim:rgba(40,30,25,.42);
+    --well:#ebe5dc;
+    color-scheme:light;
+  }
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);color:var(--ink);font:400 15px/1.4 var(--font-ui);
+  display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:"bar" "stage" "panel";
+  overflow:hidden;overscroll-behavior:none;-webkit-tap-highlight-color:transparent;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+}
+button,input,label{font:inherit;color:inherit}
+button,label[for]{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0);pointer-events:none}
+svg{flex:none}
+
+/* top bar */
+.bar{grid-area:bar;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:calc(8px + var(--safe-t)) calc(12px + var(--safe-r)) 8px calc(16px + var(--safe-l));border-bottom:1px solid var(--line);background:var(--bg)}
+.brand{display:flex;align-items:center;gap:8px;min-width:0}
+.logo{width:28px;height:28px;border-radius:7px;flex:none;display:block;box-shadow:0 0 0 1px var(--ring-soft)}
+.mark{font-family:var(--font-brand);font-weight:800;font-size:23px;line-height:1;letter-spacing:-.04em}
+.mark b{font-weight:inherit;color:var(--accent)}
+.sub{font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.bar-actions{display:flex;align-items:center;gap:2px}
+.icon-btn{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;border:0;background:transparent;color:var(--ink);padding:0}
+.icon-btn:disabled{opacity:.3;cursor:default}
+.icon-btn:not(:disabled):active{background:var(--raise)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--raise);font-weight:600;font-size:14px;white-space:nowrap}
+.btn.sm{min-height:32px;padding:0 12px;font-size:13px}
+.btn.accent{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+.btn.wide{width:100%;min-height:50px;font-size:16px}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.5}
+
+/* stage */
+.stage{grid-area:stage;position:relative;display:grid;place-items:center;min-height:0;overflow:hidden;background:radial-gradient(120% 80% at 50% 45%,var(--stage-glow) 0%,var(--bg) 70%)}
+.frame{position:relative;box-shadow:var(--frame-shadow)}
+.frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#ov{touch-action:none}
+.scrub{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);border-radius:10px;touch-action:none;cursor:ew-resize;z-index:2;display:block}
+.pill{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:4px 4px 4px 14px;border-radius:999px;background:var(--pill-bg);border:1px solid var(--line);font-size:13px;color:var(--muted);white-space:nowrap;z-index:3}
+.pill .btn{min-height:30px;padding:0 12px;font-size:13px}
+.pill.bottom{top:auto;bottom:12px;color:var(--ink)}
+/* First run: samples on screen, so the one thing to do is add your own photos. */
+.cta{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);width:min(440px,calc(100% - 32px));z-index:3;display:grid;gap:8px}
+.cta p{margin:0 6px;font-size:12.5px;line-height:1.4;color:var(--muted);text-align:center;text-wrap:balance}
+.drop{position:fixed;inset:10px;z-index:30;display:grid;place-items:center;border:2px dashed var(--accent);border-radius:24px;background:color-mix(in srgb,var(--bg) 82%,transparent);pointer-events:none}
+.drop p{margin:0;font-family:var(--font-brand);font-weight:800;font-size:28px;letter-spacing:-.02em;color:var(--ink)}
+.meta-note{color:var(--ink)}
+.toast{position:absolute;left:50%;bottom:14px;transform:translate(-50%,8px);opacity:0;transition:opacity .2s,transform .2s;background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:12px;font-size:13.5px;font-weight:500;max-width:calc(100% - 32px);width:max-content;text-align:center;pointer-events:none;z-index:5;display:flex;gap:10px;align-items:center}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.spinner{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:14px;text-align:center;padding:24px;z-index:2}
+.empty h2{font-family:var(--font-display);font-style:italic;font-weight:400;font-size:36px;line-height:1.05;margin:0;text-wrap:balance}
+.empty p{margin:0;color:var(--muted);max-width:30ch}
+
+/* control tray */
+.panel{grid-area:panel;display:flex;flex-direction:column;background:var(--surface);border-top:1px solid var(--line);min-height:0;padding:0 var(--safe-r) var(--safe-b) var(--safe-l)}
+.panes{height:200px;overflow-y:auto;overflow-x:hidden;padding:12px 16px 10px;-webkit-overflow-scrolling:touch}
+.pane{display:grid;gap:10px;align-content:start}
+.tabs{display:grid;grid-template-columns:repeat(7,1fr);border-top:1px solid var(--line);padding:2px 2px}
+.tab{display:grid;justify-items:center;gap:2px;padding:8px 0 9px;border:0;background:none;color:var(--muted);font-size:10px;font-weight:600;letter-spacing:.01em}
+.tab[aria-selected="true"]{color:var(--ink)}
+.tab[aria-selected="true"] svg{color:var(--accent)}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row.between{justify-content:space-between}
+.hint{margin:0;font-size:12.5px;color:var(--muted);line-height:1.45}
+.label{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.strip{display:flex;gap:10px;overflow-x:auto;overflow-y:hidden;margin:0 -16px;padding:4px 16px 6px;scrollbar-width:none}
+.strip::-webkit-scrollbar{display:none}
+.tile{position:relative;flex:0 0 auto;width:68px}
+.tile-meta{display:block;margin-top:5px;font-size:11px;line-height:1.3;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile-meta b{display:block;font-weight:600;color:var(--ink)}
+.tile-meta b.none{color:var(--muted);font-weight:500}
+.tile-pick{width:100%;height:68px;padding:0;border:0;border-radius:12px;overflow:hidden;background:var(--raise);display:block}
+.tile-pick img{width:100%;height:100%;object-fit:cover;display:block}
+.tile[aria-current="true"] .tile-pick{outline:2px solid var(--accent);outline-offset:2px}
+.tile-x{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:50%;border:2px solid var(--surface);background:var(--chip);display:grid;place-items:center;padding:0;color:var(--ink)}
+.tile.add{height:68px;align-self:flex-start;display:grid;place-items:center;align-content:center;gap:2px;border:1.5px dashed var(--dash);border-radius:12px;font-size:12px;font-weight:600;text-align:center;line-height:1.15}
+.tile.add.hot{background:var(--accent);border:0;color:var(--accent-ink)}
+.seg{display:inline-flex;padding:3px;border-radius:12px;background:var(--raise);border:1px solid var(--line)}
+.seg button{border:0;background:none;padding:7px 12px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.seg.full{display:flex}
+.seg.full button{flex:1;padding:8px 6px}
+.field{display:grid;grid-template-columns:86px minmax(0,1fr) 42px;align-items:center;gap:10px;min-height:34px}
+.field label{font-size:13.5px;color:var(--muted)}
+.field output{font-size:13px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+input[type=range]{width:100%;accent-color:var(--accent);height:28px;margin:0;background:transparent}
+input[type=date]{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:6px 10px;color:var(--ink);font-size:14px}
+.swatches{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:3px}
+.sw{width:30px;height:30px;border-radius:50%;border:0;padding:0;box-shadow:inset 0 0 0 1px var(--ring)}
+.sw[aria-pressed="true"]{outline:2px solid var(--accent);outline-offset:3px}
+.sw-custom{position:relative;overflow:hidden;background:conic-gradient(#ff6b6b,#ffd56b,#7be08a,#6bc7ff,#a98bff,#ff6b6b)}
+.sw-custom input{position:absolute;inset:-8px;opacity:0;width:calc(100% + 16px);height:calc(100% + 16px);cursor:pointer;border:0;padding:0}
+.grad{width:46px;height:30px;border-radius:9px;border:0;padding:0;box-shadow:inset 0 0 0 1px var(--ring)}
+.grad[aria-pressed="true"]{outline:2px solid var(--accent);outline-offset:3px}
+.lay{flex:0 0 auto;padding:0;border:0;border-radius:8px;background:none;line-height:0}
+.lay canvas{border-radius:6px}
+.lay[aria-pressed="true"] canvas{outline:2px solid var(--accent);outline-offset:2px}
+.stile{flex:0 0 auto;display:grid;gap:5px;justify-items:center;border:0;background:none;padding:0;font-size:12px;font-weight:600;color:var(--muted)}
+.stile .thumb{height:100px;display:grid;place-items:center}
+.stile canvas{display:block;border-radius:5px;box-shadow:0 0 0 1px var(--ring-soft)}
+.stile[aria-pressed="true"]{color:var(--ink)}
+.stile[aria-pressed="true"] canvas{outline:2px solid var(--accent);outline-offset:2px}
+.look{flex:0 0 auto;display:grid;gap:5px;justify-items:center;border:0;background:none;padding:0;font-size:12px;font-weight:600;color:var(--muted)}
+.look canvas{width:60px;height:60px;border-radius:12px;display:block}
+.look[aria-pressed="true"]{color:var(--ink)}
+.look[aria-pressed="true"] canvas{outline:2px solid var(--accent);outline-offset:2px}
+.fmt{flex:0 0 auto;display:grid;justify-items:center;align-content:start;gap:5px;width:86px;padding:10px 6px;border-radius:14px;border:1px solid var(--line);background:var(--raise)}
+.fmt .shape{display:flex;align-items:center;justify-content:center;height:42px}
+.fmt .shape i{display:block;border:2px solid currentColor;border-radius:3px}
+.fmt .shape i + i{border-left-style:dashed;margin-left:-2px}
+.fmt b{font-size:13px;font-weight:600}
+.fmt small{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.3;text-align:center}
+.fmt[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.fmt[aria-pressed="true"] .shape{color:var(--accent)}
+.stepper{display:inline-flex;align-items:center;gap:4px;background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:3px}
+.stepper button{width:36px;height:30px;border:0;border-radius:9px;background:none;font-size:18px;font-weight:600;line-height:1}
+.stepper button:active{background:var(--line)}
+.stepper output{min-width:26px;text-align:center;font-variant-numeric:tabular-nums;font-weight:600}
+.tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.tool{display:grid;justify-items:center;gap:4px;padding:9px 2px;border-radius:12px;border:1px solid var(--line);background:var(--raise);font-size:11.5px;font-weight:600;text-align:center}
+.tool.on{border-color:var(--accent);color:var(--accent)}
+.tool.danger{color:var(--danger)}
+.switch{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted)}
+.switch input{width:20px;height:20px;accent-color:var(--accent);margin:0}
+
+.txt{width:100%;min-height:40px;background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--ink);font:400 16px/1.2 var(--font-ui);-webkit-user-select:text;user-select:text}
+.txt::placeholder{color:var(--placeholder)}
+.txt.sm{min-height:34px;font-size:15px;padding:6px 10px}
+select.txt{-webkit-appearance:none;appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a39aa0' stroke-width='2'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center}
+.secrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) auto auto;gap:6px;align-items:center}
+.secrow small{grid-column:1 / -1;margin-top:-2px;color:var(--muted);font-size:11.5px}
+.mini{width:32px;height:34px;border-radius:9px;border:1px solid var(--line);background:var(--raise);display:grid;place-items:center;padding:0;font-size:15px}
+.mini:disabled{opacity:.3}
+.caprow{display:grid;grid-template-columns:40px minmax(0,1fr);gap:8px;align-items:center}
+.caprow img{width:40px;height:40px;border-radius:8px;object-fit:cover;display:block}
+.font{flex:0 0 auto;display:grid;justify-items:center;gap:2px;width:86px;padding:8px 4px;border-radius:12px;border:1px solid var(--line);background:var(--raise);font-size:11.5px;font-weight:600;color:var(--muted)}
+.font .aa{font-size:26px;line-height:1.15;color:var(--ink)}
+.font[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);color:var(--ink)}
+.fav{flex:0 0 auto;display:grid;gap:4px;justify-items:center;border:0;background:none;padding:0;font-size:11.5px;font-weight:600;color:var(--muted);max-width:110px}
+.fav .thumb{height:84px;display:grid;place-items:center;position:relative}
+.fav canvas{display:block;border-radius:5px;box-shadow:0 0 0 1px var(--ring-soft)}
+.fav span.nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.fav[aria-pressed="true"]{color:var(--ink)}
+.fav[aria-pressed="true"] canvas{outline:2px solid var(--accent);outline-offset:2px}
+.fav .star{position:absolute;top:-4px;right:-4px;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-size:11px}
+.favadd{flex:0 0 auto;width:66px;height:84px;display:grid;place-items:center;align-content:center;gap:2px;border:1.5px dashed var(--dash);border-radius:10px;background:none;font-size:11.5px;font-weight:600;text-align:center;line-height:1.2}
+.stripsep{flex:0 0 auto;display:grid;align-content:center;padding:0 2px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);writing-mode:vertical-rl;transform:rotate(180deg)}
+.sw-auto{background:linear-gradient(135deg,#ffffff 0 50%,#171512 50% 100%)}
+.swsep{width:1px;height:24px;background:var(--line)}
+
+/* save sheet */
+.sheet{position:fixed;inset:0;z-index:20;display:grid;align-items:end;justify-items:center;background:var(--scrim);padding-top:var(--safe-t)}
+.sheet-card{width:min(560px,100%);max-height:100%;overflow:auto;background:var(--surface);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;padding:14px 16px calc(22px + var(--safe-b));display:grid;gap:14px}
+.sheet h2{margin:0;font-family:var(--font-display);font-style:italic;font-weight:400;font-size:28px;line-height:1.1}
+.save-preview{position:relative;display:grid;place-items:center;min-height:200px;background:var(--well);border-radius:12px;overflow:hidden}
+.save-preview .one{max-width:100%;max-height:50vh;display:block}
+.save-strip{display:flex;gap:6px;overflow-x:auto;padding:10px;max-width:100%;justify-self:stretch}
+.save-strip img{height:40vh;width:auto;flex:none;display:block;border-radius:4px}
+.save-preview img{-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto}
+.save-preview .spinner{position:absolute;width:28px;height:28px;color:var(--muted)}
+.meta{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+@media (min-width:900px){
+  body{grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:auto minmax(0,1fr);grid-template-areas:"bar bar" "stage panel"}
+  .panel{border-top:0;border-left:1px solid var(--line)}
+  .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line)}
+  .panes{flex:1;height:auto;padding:18px 20px}
+  .strip{flex-wrap:wrap;overflow:visible;margin:0;padding:4px 2px}
+  .sheet{align-items:center}
+  .sheet-card{border-radius:20px;border-bottom:1px solid var(--line)}
+}
+/* drafts */
+.booting #frame,.booting .cta,.booting .scrub{visibility:hidden}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px 14px}
+.dcard{position:relative;display:grid;gap:6px;align-content:start;min-width:0}
+.dopen{display:grid;gap:2px;justify-items:start;text-align:left;border:0;background:none;padding:0;color:var(--ink);font:inherit;min-width:0}
+.dthumb{position:relative;width:100%;aspect-ratio:4/5;border-radius:12px;background:var(--well);display:grid;place-items:center;overflow:hidden;box-shadow:0 0 0 1px var(--ring-soft);margin-bottom:4px}
+.dthumb img{max-width:92%;max-height:92%;display:block;border-radius:3px}
+.dcard.current .dthumb{box-shadow:0 0 0 2px var(--accent)}
+.dnow{position:absolute;top:8px;left:8px;padding:3px 9px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700}
+.dname{font-weight:650;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.dmeta{font-size:12px;color:var(--muted)}
+.ddel{position:absolute;top:6px;right:6px;width:34px;height:34px;border-radius:10px;background:var(--pill-bg);color:var(--ink)}
+.dconfirm{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px;border-radius:12px;background:var(--raise);border:1px solid var(--line)}
+.dconfirm p{margin:0;width:100%;font-size:13px;line-height:1.35}
+.btn.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+.drafts-empty{margin:0;padding:18px;border-radius:14px;border:1.5px dashed var(--dash);text-align:center}
+@media (max-width:400px){.mark{font-size:20px}.bar{gap:6px}.bar-actions .icon-btn{width:36px}}
+@media (prefers-reduced-motion:reduce){*{transition:none !important;animation-duration:0s !important}}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><svg class="logo" viewBox="0 0 240 240" aria-hidden="true"><rect width="240" height="240" fill="#f2ece4"/><circle cx="120" cy="98" r="40" fill="none" stroke="#ff6b3d" stroke-width="30"/><path d="M160 60V148C160 186 132 196 108 190C96 187 88 180 84 172" fill="none" stroke="#ff6b3d" stroke-width="30" stroke-linecap="round"/><circle cx="70" cy="200" r="7" fill="#ff6b3d"/></svg><span class="mark"><b>g</b>luestick</span></div>
+  <div class="bar-actions">
+    <button class="icon-btn" id="openDrafts" aria-label="Your collages" title="Your collages" hidden><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="14" height="14" rx="2"/><path d="M17 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2"/></svg></button>
+    <label class="icon-btn" for="fileAdd" tabindex="0" aria-label="Add photos" title="Add photos"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7"/><path d="M3 16l5-5 4 4 2-2 4 4"/><path d="M18 2v6"/><path d="M15 5h6"/></svg></label>
+    <button class="icon-btn" id="undo" aria-label="Undo" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button class="icon-btn" id="redo" aria-label="Redo" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+    <button class="btn accent" id="openSave">Save</button>
+  </div>
+</header>
+
+<main class="stage" id="stage">
+  <div class="frame" id="frame">
+    <canvas id="view" role="img" aria-label="Collage preview"></canvas>
+    <canvas id="ov" aria-hidden="true"></canvas>
+  </div>
+  <canvas class="scrub" id="scrub" hidden aria-label="Carousel overview. Drag to move along the slides."></canvas>
+  <div class="cta" id="samplePill">
+    <label class="btn accent wide" for="fileAdd" tabindex="0"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7"/><path d="M3 16l5-5 4 4 2-2 4 4"/><path d="M18 2v6"/><path d="M15 5h6"/></svg>Add your photos</label>
+    <p>These are samples. Add up to 30 of yours and Gluestick reads the date and place from each one.</p>
+  </div>
+  <div class="pill bottom" id="swapHint" hidden><span>Tap the photo to swap with</span><button class="btn" id="swapCancel">Cancel</button></div>
+  <div class="empty" id="empty" hidden>
+    <h2>Fit more in one frame</h2>
+    <p>Add photos and Gluestick lays them out for Stories, posts, carousels and your profile grid.</p>
+    <label class="btn accent" for="fileAdd" tabindex="0">Add photos</label>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</main>
+<div class="drop" id="drop" hidden><p>Drop photos to add them</p></div>
+
+<section class="panel" aria-label="Editing controls">
+  <div class="panes">
+    <!-- Photos -->
+    <div class="pane" data-pane="photos">
+      <div class="row between"><span class="label" id="photoCount">Photos</span><button class="btn sm" id="clearAll">Clear all</button></div>
+      <div class="strip" id="photoStrip"></div>
+      <p class="hint meta-note" id="metaNote" hidden></p>
+      <p class="hint">Tap any photo in the collage to move, zoom, swap or replace it.</p>
+    </div>
+
+    <!-- Layout -->
+    <div class="pane" data-pane="layout" hidden>
+      <div class="row between">
+        <button class="btn accent" id="shuffle"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>Shuffle</button>
+        <div class="seg" data-seg="sizing" role="group" aria-label="Cell sizes"><button data-v="fit">Fit photos</button><button data-v="even">Even</button></div>
+      </div>
+      <div class="strip" id="layoutStrip"></div>
+      <p class="hint" id="layoutHint">Drag the white handles on the collage to resize rows and columns.</p>
+    </div>
+
+    <!-- Style -->
+    <div class="pane" data-pane="style" hidden>
+      <div class="row between"><span class="label">Favourites</span><span class="meta" id="favNote"></span></div>
+      <div class="strip" id="favStrip"></div>
+      <div class="row" id="favActions" hidden><input class="txt sm" id="favName" aria-label="Favourite name" maxlength="28" style="flex:1;min-width:0;width:auto"><button class="btn sm" id="favDefault">☆ Default</button><button class="btn sm" id="favDelete">Delete</button></div>
+      <div class="pane" id="favLayoutRow" hidden><label class="switch"><input type="checkbox" id="favLayout"> Use its layout too</label><p class="hint" id="favLayoutNote"></p></div>
+      <span class="label">Styles</span>
+      <div class="strip" id="styleStrip"></div>
+      <div class="style-ctl pane" data-style="grid">
+        <div class="field"><label for="s-gap">Spacing</label><input type="range" id="s-gap" data-key="gap" min="0" max="60" step="1"><output for="s-gap"></output></div>
+        <div class="field"><label for="s-margin">Border</label><input type="range" id="s-margin" data-key="margin" min="0" max="140" step="1"><output for="s-margin"></output></div>
+        <div class="field"><label for="s-radius">Corners</label><input type="range" id="s-radius" data-key="radius" min="0" max="60" step="1"><output for="s-radius"></output></div>
+      </div>
+      <div class="style-ctl pane" data-style="shapes">
+        <div class="seg full" data-seg="shape" role="group" aria-label="Shape"><button data-v="arch">Arch</button><button data-v="oval">Oval</button><button data-v="pill">Pill</button><button data-v="stamp">Stamp</button></div>
+        <div class="field"><label for="s-hgap">Spacing</label><input type="range" id="s-hgap" data-key="shapeGap" min="0" max="80" step="1"><output for="s-hgap"></output></div>
+        <div class="field"><label for="s-hmargin">Border</label><input type="range" id="s-hmargin" data-key="shapeMargin" min="0" max="160" step="1"><output for="s-hmargin"></output></div>
+      </div>
+      <div class="style-ctl pane" data-style="torn">
+        <div class="field"><label for="s-tear">Tear width</label><input type="range" id="s-tear" data-key="tear" min="3" max="28" step="1"><output for="s-tear"></output></div>
+        <div class="field"><label for="s-rough">Roughness</label><input type="range" id="s-rough" data-key="rough" data-div="100" min="0" max="100" step="1"><output for="s-rough"></output></div>
+        <div class="field"><label for="s-tilt">Tilt</label><input type="range" id="s-tilt" data-key="tilt" data-div="100" min="0" max="100" step="1"><output for="s-tilt"></output></div>
+        <div class="field"><label for="s-tmargin">Border</label><input type="range" id="s-tmargin" data-key="tornMargin" min="0" max="120" step="1"><output for="s-tmargin"></output></div>
+        <div class="row"><button class="btn sm" id="retear">New tear</button></div>
+      </div>
+      <div class="style-ctl pane" data-style="scrap instant">
+        <div class="field"><label for="s-sgap">Spacing</label><input type="range" id="s-sgap" data-key="scrapGap" min="0" max="80" step="1"><output for="s-sgap"></output></div>
+        <div class="field"><label for="s-smargin">Border</label><input type="range" id="s-smargin" data-key="scrapMargin" min="0" max="140" step="1"><output for="s-smargin"></output></div>
+        <div class="field"><label for="s-mess">Messiness</label><input type="range" id="s-mess" data-key="mess" data-div="100" min="0" max="100" step="1"><output for="s-mess"></output></div>
+        <div class="field"><label for="s-frame">Frame</label><input type="range" id="s-frame" data-key="frame" min="0" max="40" step="1"><output for="s-frame"></output></div>
+        <div class="row between"><label class="switch"><input type="checkbox" id="tape" data-flag="tape"> Washi tape</label><button class="btn sm" id="rescatter">Re-scatter</button></div>
+      </div>
+      <div class="style-ctl pane" data-style="film">
+        <div class="row between"><span class="label">Strips</span><div class="seg" data-seg="strips" data-num="1" role="group" aria-label="Number of strips"><button data-v="0">Auto</button><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button></div></div>
+        <div class="field"><label for="s-ftilt">Tilt</label><input type="range" id="s-ftilt" data-key="filmTilt" data-div="100" min="0" max="100" step="1"><output for="s-ftilt"></output></div>
+        <div class="row"><label class="switch"><input type="checkbox" id="sprockets" data-flag="sprockets"> Sprocket holes</label><label class="switch"><input type="checkbox" id="edgeText" data-flag="edgeText"> Edge numbers</label></div>
+        <p class="hint">For a photo booth strip, turn off sprocket holes and pick a white film colour in Colour.</p>
+      </div>
+    </div>
+
+    <!-- Colour -->
+    <div class="pane" data-pane="colour" hidden>
+      <div class="row between"><span class="label">Background</span><div class="seg" data-seg="bgMode" role="group" aria-label="Background type"><button data-v="solid">Solid</button><button data-v="gradient">Gradient</button><button data-v="blur">Photo blur</button></div></div>
+      <div class="swatches" id="bgSolid" aria-label="Background colour"></div>
+      <div class="swatches" id="bgGrad" aria-label="Background gradient"></div>
+      <p class="hint" id="bgBlurHint">A soft blur of your first photo fills the background. To use another, tap that photo and choose Blur bg.</p>
+      <label class="switch"><input type="checkbox" id="texture" data-flag="texture"> Paper texture</label>
+      <span class="label" id="borderLabel">Border colour</span>
+      <div class="swatches" id="borderSw" aria-label="Border colour"></div>
+      <div class="field" id="borderWField"><label for="s-bw">Outline</label><input type="range" id="s-bw" data-key="borderW" min="0" max="30" step="1"><output for="s-bw"></output></div>
+      <p class="hint" id="borderHint"></p>
+    </div>
+
+    <!-- Text -->
+    <div class="pane" data-pane="text" hidden>
+      <div class="seg full" id="textSub" role="group" aria-label="Text section"><button data-v="title">Title</button><button data-v="sections">Sections</button><button data-v="captions">Captions</button></div>
+      <div class="pane" data-tsub="title">
+        <div class="row between"><button class="btn sm" id="titleAuto">Fill from photos</button><span class="meta">Uses their places and dates</span></div>
+        <input class="txt" id="titleIn" type="text" placeholder="Title, e.g. Lisbon '26" maxlength="60" autocomplete="off">
+        <input class="txt" id="subIn" type="text" placeholder="Subtitle, e.g. 14–18 November" maxlength="80" autocomplete="off">
+        <div class="strip" id="fontStrip"></div>
+        <div class="row between"><div class="seg" data-seg="titlePos" role="group" aria-label="Title position"><button data-v="top">Top</button><button data-v="over">Over</button><button data-v="bottom">Bottom</button></div><div class="seg" data-seg="textAlign" role="group" aria-label="Text alignment"><button data-v="left">Left</button><button data-v="center">Centre</button></div></div>
+        <div class="field"><label for="s-tsize">Text size</label><input type="range" id="s-tsize" data-key="titleSize" data-div="100" min="50" max="180" step="1"><output for="s-tsize"></output></div>
+        <span class="label">Text colour</span>
+        <div class="swatches" id="textSw" aria-label="Text colour"></div>
+      </div>
+      <div class="pane" data-tsub="sections" hidden>
+        <label class="switch"><input type="checkbox" id="secToggle"> Split into sections</label>
+        <div class="row"><button class="btn sm" id="secByDay">Group by day</button><button class="btn sm" id="secByPlace">Group by place</button></div>
+        <div class="pane" id="secList"></div>
+        <label class="switch"><input type="checkbox" id="secHeads" data-flag="secHeads"> Show section headings</label>
+        <p class="hint">Sections stack in one image, or each becomes its own slide in a carousel. Group by day uses when each photo was taken; Group by place uses where. To move a photo, tap it and pick a section.</p>
+      </div>
+      <div class="pane" data-tsub="captions" hidden>
+        <div class="row between"><span class="label">Caption style</span><div class="seg" data-seg="capStyle" role="group" aria-label="Caption style"><button data-v="tag">Tag</button><button data-v="plain">Plain</button></div></div>
+        <div class="row between"><button class="btn sm" id="capPlaces">Add place names</button><span class="meta">From each photo’s location</span></div>
+        <div class="pane" id="capList"></div>
+        <p class="hint">Places are matched on your device; locations never leave it, and saved collages don’t include them. Place names © GeoNames (CC BY 4.0).</p>
+      </div>
+    </div>
+
+    <!-- Look -->
+    <div class="pane" data-pane="look" hidden>
+      <div class="seg full" id="lookSub" role="group" aria-label="Look section"><button data-v="filters">Filters</button><button data-v="adjust">Adjust</button><button data-v="effects">Effects</button></div>
+      <div class="pane" data-sub="filters">
+        <div class="strip" id="lookStrip"></div>
+        <div class="field"><label for="s-amt">Strength</label><input type="range" id="s-amt" data-key="lookAmt" data-div="100" min="0" max="100" step="1"><output for="s-amt"></output></div>
+      </div>
+      <div class="pane" data-sub="adjust" hidden>
+        <div class="field"><label for="s-exp">Exposure</label><input type="range" id="s-exp" data-key="exposure" data-div="100" min="-100" max="100" step="1"><output for="s-exp"></output></div>
+        <div class="field"><label for="s-con">Contrast</label><input type="range" id="s-con" data-key="contrast" data-div="100" min="-100" max="100" step="1"><output for="s-con"></output></div>
+        <div class="field"><label for="s-warm">Warmth</label><input type="range" id="s-warm" data-key="warmth" data-div="100" min="-100" max="100" step="1"><output for="s-warm"></output></div>
+        <div class="field"><label for="s-sat">Saturation</label><input type="range" id="s-sat" data-key="saturation" data-div="100" min="-100" max="100" step="1"><output for="s-sat"></output></div>
+        <div class="field"><label for="s-fade">Fade</label><input type="range" id="s-fade" data-key="fade" data-div="100" min="0" max="100" step="1"><output for="s-fade"></output></div>
+        <div class="row"><button class="btn sm" id="resetAdj">Reset adjustments</button></div>
+      </div>
+      <div class="pane" data-sub="effects" hidden>
+        <div class="field"><label for="s-grain">Film grain</label><input type="range" id="s-grain" data-key="grain" data-div="100" min="0" max="100" step="1"><output for="s-grain"></output></div>
+        <div class="field"><label for="s-vig">Vignette</label><input type="range" id="s-vig" data-key="vignette" data-div="100" min="0" max="100" step="1"><output for="s-vig"></output></div>
+        <div class="field"><label for="s-leak">Light leak</label><input type="range" id="s-leak" data-key="leak" data-div="100" min="0" max="100" step="1"><output for="s-leak"></output></div>
+        <div class="field"><label for="s-dust">Dust</label><input type="range" id="s-dust" data-key="dust" data-div="100" min="0" max="100" step="1"><output for="s-dust"></output></div>
+        <div class="row between"><label class="switch"><input type="checkbox" id="dateStamp" data-flag="dateStamp"> Date stamp</label><input type="date" id="dateIn" aria-label="Date to stamp"></div>
+        <div class="row between"><span class="label">Date style</span><div class="seg" data-seg="dateFmt" role="group" aria-label="Date style"><button data-v="yy">’26 11 15</button><button data-v="us">11 15 ’26</button><button data-v="dot">15.11.26</button></div></div>
+        <label class="switch"><input type="checkbox" id="dateAuto" data-flag="dateAuto"> Use each photo’s own date when known</label>
+        <p class="hint" id="dateNote"></p>
+      </div>
+    </div>
+
+    <!-- Size -->
+    <div class="pane" data-pane="size" hidden>
+      <div class="strip" id="fmtStrip"></div>
+      <div class="pane" id="carouselCtl">
+        <div class="row between"><span class="label">Slides</span><div class="stepper"><button id="slMinus" aria-label="Fewer slides">−</button><output id="slCount">3</output><button id="slPlus" aria-label="More slides">+</button></div></div>
+        <div class="row between"><span class="label">Slide shape</span><div class="seg" data-seg="slideRatio" role="group" aria-label="Slide shape"><button data-v="4:5">4:5</button><button data-v="1:1">1:1</button><button data-v="3:4">3:4</button></div></div>
+      </div>
+      <label class="switch" id="guideRow"><input type="checkbox" id="gridGuide"> Show profile-grid crop</label>
+      <p class="hint" id="sizeHint"></p>
+    </div>
+
+    <!-- Selected photo -->
+    <div class="pane" id="cellPane" hidden>
+      <div class="row between"><span class="label" id="cellTitle">Photo</span><button class="btn sm" id="cellDone">Done</button></div>
+      <div class="tools">
+        <label class="tool" for="fileReplace" tabindex="0"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>Replace</label>
+        <button class="tool" id="toolSwap"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4L3 8l4 4"/><path d="M3 8h14"/><path d="M17 12l4 4-4 4"/><path d="M21 16H7"/></svg>Swap</button>
+        <button class="tool" id="toolFeature" aria-label="Feature this photo"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>Feature</button>
+        <button class="tool" id="toolBlur"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="4" fill="currentColor" opacity=".35"/><circle cx="12" cy="12" r="7" opacity=".5"/></svg>Blur bg</button>
+        <button class="tool danger" id="toolRemove"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>Remove</button>
+      </div>
+      <input class="txt" id="capIn" type="text" placeholder="Caption, e.g. Sintra" maxlength="40" autocomplete="off" aria-label="Caption for this photo">
+      <div class="row" id="secRow"><label class="label" for="secSel">Section</label><select class="txt sm" id="secSel" style="flex:1;width:auto;min-width:0"></select></div>
+      <div class="field"><label for="zoom">Zoom</label><input type="range" id="zoom" min="100" max="400" step="1"><output for="zoom" id="zoomOut"></output></div>
+      <div class="row between"><p class="hint">Drag to move, pinch to zoom, hold and drag to swap.</p><button class="btn sm" id="toolReset">Reset crop</button></div>
+    </div>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Editor sections">
+    <button class="tab" role="tab" data-tab="photos" aria-selected="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>Photos</button>
+    <button class="tab" role="tab" data-tab="layout" aria-selected="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M11 3v18"/><path d="M11 12h10"/></svg>Layout</button>
+    <button class="tab" role="tab" data-tab="style" aria-selected="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M3 12l3-2 3 3 3-3 3 3 3-2 3 1"/><path d="M3 18h18"/></svg>Style</button>
+    <button class="tab" role="tab" data-tab="colour" aria-selected="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-1 2-2 0-1.6-1.5-1.8-1.5-3 0-1 .8-1.5 2-1.5H17a4 4 0 0 0 4-4C21 6.4 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.2" fill="currentColor"/><circle cx="10.5" cy="7" r="1.2" fill="currentColor"/><circle cx="15.5" cy="7.5" r="1.2" fill="currentColor"/></svg>Colour</button>
+    <button class="tab" role="tab" data-tab="text" aria-selected="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>Text</button>
+    <button class="tab" role="tab" data-tab="look" aria-selected="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/><path d="M12 6.5a5.5 5.5 0 0 1 0 11" fill="currentColor" stroke="none" opacity=".5"/></svg>Look</button>
+    <button class="tab" role="tab" data-tab="size" aria-selected="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/></svg>Size</button>
+  </nav>
+</section>
+
+<input type="file" id="fileAdd" class="vh" accept="image/*" multiple tabindex="-1">
+<input type="file" id="fileReplace" class="vh" accept="image/*" tabindex="-1">
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="saveTitle">
+    <div class="row between"><h2 id="saveTitle">Save your collage</h2><button class="icon-btn" id="sheetClose" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="save-preview" id="savePrev"><div class="spinner" id="saveSpin"></div></div>
+    <div class="row between"><div class="seg" data-seg="res" role="group" aria-label="Resolution"><button data-v="1">Standard</button><button data-v="2">High-res</button></div><span class="meta" id="saveMeta"></span></div>
+    <button class="btn accent wide" id="saveBtn" hidden>Save JPEG</button>
+    <button class="btn wide" id="shareBtn" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Share to Instagram and more</button>
+    <p class="hint" id="saveHint"></p>
+  </div>
+</div>
+
+<div class="sheet" id="drafts" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="draftsTitle">
+    <div class="row between"><h2 id="draftsTitle">Your collages</h2><button class="icon-btn" id="draftsClose" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <button class="btn accent wide" id="draftNew"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New collage</button>
+    <p class="hint drafts-empty" id="draftEmpty">Collages you make with your own photos save here automatically.</p>
+    <div class="dgrid" id="draftList"></div>
+    <p class="hint" id="draftNote"></p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
