@@ -1659,6 +1659,7 @@ function drawOverlay() {
   if (gesture && gesture.type === 'drag') {
     const t = gesture.target;
     if (t && t.pid !== gesture.L.pid) { leafPath(o, t); o.fillStyle = 'rgba(255,107,61,.28)'; o.fill(); o.lineWidth = 3 * k; o.strokeStyle = '#ff6b3d'; o.stroke(); }
+    else if (gesture.region) { const R = gesture.region.rect; o.save(); o.fillStyle = 'rgba(255,107,61,.12)'; o.fillRect(R.x, R.y, R.w, R.h); o.setLineDash([8 * k, 6 * k]); o.lineWidth = 3 * k; o.strokeStyle = '#ff6b3d'; o.strokeRect(R.x, R.y, R.w, R.h); o.restore(); }
     const p = S.photos.get(gesture.L.pid), r = 36 * k, cx = gesture.pos.x, cy = gesture.pos.y - 56 * k;
     o.save(); o.shadowColor = 'rgba(0,0,0,.45)'; o.shadowBlur = 14 * k; o.beginPath(); o.arc(cx, cy, r + 3 * k, 0, 7); o.fillStyle = '#fff'; o.fill(); o.restore();
     o.save(); o.beginPath(); o.arc(cx, cy, r, 0, 7); o.clip(); const cr = coverRect(p.thumb.width, p.thumb.height, cx - r, cy - r, 2 * r, 2 * r, { z: 1, fx: .5, fy: .5 }); o.drawImage(p.thumb, cr.dx, cr.dy, cr.dw, cr.dh); o.restore();
@@ -1735,8 +1736,13 @@ ov.addEventListener('pointerdown', e => {
   gesture = { type: 'pan', L, start: p, last: p, moved: false, changed: false };
   clearTimeout(lpTimer);
   lpTimer = setTimeout(() => {
-    if (gesture && gesture.type === 'pan' && !gesture.moved && pointers.size === 1) { gesture = { type: 'drag', L: gesture.L, pos: gesture.last, target: null }; drawOverlay(); }
-  }, 450);
+    if (gesture && gesture.type === 'pan' && !gesture.moved && pointers.size === 1) {
+      gesture = { type: 'drag', L: gesture.L, pos: gesture.last, target: null, region: null, cx: e.clientX, cy: e.clientY };
+      if (navigator.vibrate) try { navigator.vibrate(10); } catch (err) { /* not supported */ }
+      if (NATIVE && NATIVE.haptic) NATIVE.haptic();
+      drawOverlay();
+    }
+  }, 350);
 });
 ov.addEventListener('pointermove', e => {
   if (!pointers.has(e.pointerId)) return;
@@ -1761,9 +1767,43 @@ ov.addEventListener('pointermove', e => {
     n.r = clamp(gesture.r0 + delta / Math.max(1, span), .08, .92);
     gesture.changed = true; scheduleRender(true);
   } else if (gesture.type === 'drag') {
-    gesture.pos = p; gesture.target = hitLeaf(lastGeom, p); drawOverlay();
+    gesture.cx = e.clientX; gesture.cy = e.clientY;
+    dragTo(p); dragAutoScroll();
   }
 });
+// Where a dragged photo would land: another photo (swap) or the empty space of another image or section (move).
+// Several images: anywhere in another image that isn't a photo (its margins, gaps, heading) counts.
+function sectionRegionAt(p) {
+  if (!hasSecs() || !lastGeom) return null;
+  const D = dims(), g = lastGeom, secs = S.tree.secs;
+  if (D.slides) {
+    const sw = g.W / D.slides, i = Math.floor(p.x / sw);
+    return i >= 0 && i < Math.min(secs.length, D.slides) ? { sec: secs[i], rect: { x: i * sw, y: 0, w: sw, h: g.H } } : null;
+  }
+  const R = frameFor(g.W, g.H, S.set, S.tree).regions.find(R => p.x >= R.rect.x && p.x <= R.rect.x + R.rect.w && p.y >= R.rect.y - 1 && p.y <= R.rect.y + R.rect.h + 1);
+  return R ? { sec: R.sec, rect: R.rect } : null;
+}
+function dragTo(p) {
+  const gs = gesture; gs.pos = p; gs.target = hitLeaf(lastGeom, p);
+  gs.region = null;
+  if (!gs.target) {
+    const R = sectionRegionAt(p), from = secIndexOf(gs.L.pid);
+    if (R && R.sec && S.tree.secs.indexOf(R.sec) !== from) gs.region = R;
+  }
+  drawOverlay();
+}
+// While dragging a photo near the left or right edge of a several-image preview, slide the view along.
+function dragAutoScroll() {
+  const gs = gesture; clearInterval(dragAutoScroll.t);
+  if (!gs || gs.type !== 'drag' || !dims().slides) return;
+  const r = ov.getBoundingClientRect(), edge = gs.cx < r.left + 36 ? -1 : gs.cx > r.right - 36 ? 1 : 0;
+  if (!edge) return;
+  dragAutoScroll.t = setInterval(() => {
+    if (!gesture || gesture.type !== 'drag') { clearInterval(dragAutoScroll.t); return; }
+    viewOff += edge * 16 * kpx(); renderView(true);
+    dragTo(pt({ clientX: gesture.cx, clientY: gesture.cy }));
+  }, 30);
+}
 function endPointer(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
@@ -1776,8 +1816,10 @@ function endPointer(e) {
     return;
   }
   if (gesture.type === 'drag') {
-    const t = gesture.target;
-    if (t && t.pid !== gesture.L.pid) { swapPids(gesture.L.pid, t.pid); commit(); }
+    clearInterval(dragAutoScroll.t);
+    const t = gesture.target, R = gesture.region, pid = gesture.L.pid;
+    if (t && t.pid !== pid) { swapPids(pid, t.pid); commit(); toast('Swapped', 1200); }
+    else if (R) { gesture = null; moveToSection(pid, String(S.tree.secs.indexOf(R.sec))); renderOrderStrip(); scheduleRender(false); return; }
   } else if (gesture.changed) commit();
   gesture = null;
   scheduleRender(false);
@@ -1843,6 +1885,9 @@ function syncCellPane() {
     const o = document.createElement('option'); o.value = 'new'; o.textContent = im ? '+ New image' : '+ New section'; sel.appendChild(o);
   }
   $('#toolFeature').classList.toggle('on', S.hero === pid);
+  $('#cellHint').textContent = hasSecs()
+    ? `Drag to move, pinch to zoom. Hold and drag onto a photo to swap, or onto a space in another ${imageMode() || dims().slides ? 'image' : 'section'} to move it there.`
+    : 'Drag to move, pinch to zoom, hold and drag to swap.';
 }
 function setTab(t) {
   tab = t;
@@ -1898,6 +1943,7 @@ function renderPhotoStrip() {
   if (dn) dn.textContent = !real.length ? '' : dated === real.length ? `All ${real.length} photos have their date.` : dated ? `${dated} of ${real.length} photos have their date; the rest use the date above.` : 'These photos don’t include a date, so the stamp uses the date above.';
 }
 function renderLayoutStrip() {
+  renderOrderStrip();
   const strip = $('#layoutStrip'); strip.textContent = '';
   strip.hidden = hasSecs();
   const D = dims(), asp = D.w / D.h, dpr = Math.min(2, window.devicePixelRatio || 1), cur = S.tree ? sigFull(S.tree) : '';
@@ -1920,6 +1966,138 @@ function renderLayoutStrip() {
       ? 'Film strip fills frames in layout order. Shuffle or pick a layout to change the order.'
       : 'Drag the white handles to resize rows and columns. Tap a photo and choose Feature to make it the big one.';
 }
+/* ================= image (and section) order ================= */
+// One thumbnail per image (or per section when they stack in one image). Hold and drag one to a new
+// place, or tap it and use Earlier / Later. Reordering keeps each image's layout as it is.
+let ordSel = 0, ordDrag = null;
+function sectionThumbs(boxH) {
+  const D = dims(), dpr = Math.min(2, window.devicePixelRatio || 1);
+  const H = Math.round(boxH * dpr), W = Math.max(1, Math.round(H * D.w / D.h));
+  const c = canvasEl(W, H);
+  paint(c.getContext('2d'), geometryFor(S.tree, W, H, S.set), { draft: true, preview: false });
+  const n = S.tree.secs.length;
+  const rects = D.slides
+    ? Array.from({ length: Math.min(n, D.slides) }, (_, i) => ({ x: i * W / D.slides, y: 0, w: W / D.slides, h: H }))
+    : frameFor(W, H, S.set, S.tree).regions.map(R => R.rect);
+  return rects.map(r => {
+    const t = canvasEl(r.w, r.h); t.getContext('2d').drawImage(c, r.x, r.y, r.w, r.h, 0, 0, t.width, t.height);
+    let w = r.w / dpr, h = r.h / dpr; const k = Math.min(1, 132 / w); w *= k; h *= k;
+    t.style.width = Math.round(w) + 'px'; t.style.height = Math.round(h) + 'px';
+    return t;
+  });
+}
+function renderOrderStrip() {
+  const pane = $('#orderPane'), on = hasSecs() && S.tree.secs.length > 1;
+  pane.hidden = !on; if (!on) return;
+  const strip = $('#orderStrip'); strip.textContent = '';
+  const secs = S.tree.secs, im = imageMode() || !!dims().slides;
+  ordSel = clamp(ordSel, 0, secs.length - 1);
+  $('#orderLabel').textContent = im ? (S.set.format === 'carousel' ? 'Slide order' : 'Image order') : 'Section order';
+  const thumbs = sectionThumbs(im ? 84 : 54);
+  secs.forEach((s, i) => {
+    const b = document.createElement('div'); b.className = 'ord'; b.dataset.i = String(i); b.tabIndex = 0;
+    b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(i === ordSel));
+    b.setAttribute('aria-label', `${im ? 'Image' : 'Section'} ${i + 1}${s.name ? ', ' + s.name : ''}, ${secCount(s)} photos`);
+    if (thumbs[i]) b.appendChild(thumbs[i]);
+    const lab = document.createElement('span'); lab.textContent = s.name && !im ? s.name : String(i + 1); b.appendChild(lab);
+    strip.appendChild(b);
+  });
+  $('#ordEarlier').disabled = ordSel <= 0; $('#ordLater').disabled = ordSel >= secs.length - 1;
+  $('#ordNote').textContent = '';
+}
+function showSection(i) {
+  const D = dims(); if (!D.slides) return;
+  const Hv = view.height, Wv = Math.max(view.width, Math.round(Hv * D.w / D.h)), sw = Wv / D.slides;
+  viewOff = clamp(i * sw - (view.width - sw) / 2, 0, Math.max(0, Wv - view.width));
+  scheduleRender(false);
+}
+function moveSection(from, to) {
+  const secs = S.tree.secs; if (from === to || to < 0 || to >= secs.length) return;
+  const [m] = secs.splice(from, 1); secs.splice(to, 0, m);
+  ordSel = to; commit(); scheduleRender(false); renderOrderStrip(); showSection(to);
+  if (tab === 'text') renderTextPane();
+  const im = imageMode() || !!dims().slides;
+  toast(`Moved to ${im ? (S.set.format === 'carousel' ? 'slide' : 'image') : 'section'} ${to + 1}`, 1600);
+}
+(function wireOrderStrip() {
+  const strip = $('#orderStrip');
+  const itemAt = el => el && el.closest ? el.closest('.ord') : null;
+  const dropIndex = x => {
+    const items = $$('.ord', strip); let at = items.length;
+    for (let i = 0; i < items.length; i++) { const r = items[i].getBoundingClientRect(); if (x < r.left + r.width / 2) { at = i; break; } }
+    return at;
+  };
+  const caretAt = at => {
+    let c = $('.ord-caret', strip); if (!c) { c = document.createElement('i'); c.className = 'ord-caret'; strip.appendChild(c); }
+    const items = $$('.ord', strip), sr = strip.getBoundingClientRect();
+    const r = items[Math.min(at, items.length - 1)].getBoundingClientRect();
+    const x = at < items.length ? r.left : r.right + 12;
+    c.style.left = (x - sr.left + strip.scrollLeft) + 'px';
+  };
+  const lift = () => {
+    const d = ordDrag; d.active = true; d.el.classList.add('lifted');
+    const g = document.createElement('div'); g.className = 'ord-ghost';
+    const src = $('canvas', d.el); if (src) { const c = canvasEl(src.width, src.height); c.getContext('2d').drawImage(src, 0, 0); c.style.width = src.style.width; c.style.height = src.style.height; g.appendChild(c); }
+    document.body.appendChild(g); d.ghost = g; place(d.x, d.y);
+    if (navigator.vibrate) try { navigator.vibrate(10); } catch (e) { /* not supported */ }
+    if (NATIVE && NATIVE.haptic) NATIVE.haptic();
+  };
+  const place = (x, y) => {
+    const d = ordDrag; if (!d || !d.ghost) return;
+    d.ghost.style.left = x + 'px'; d.ghost.style.top = y + 'px';
+    d.to = dropIndex(x); caretAt(d.to);
+    const sr = strip.getBoundingClientRect(); // scroll the strip when the finger nears an edge
+    clearInterval(d.auto);
+    const edge = x < sr.left + 28 ? -1 : x > sr.right - 28 ? 1 : 0;
+    if (edge) d.auto = setInterval(() => { strip.scrollLeft += edge * 10; d.to = dropIndex(d.x); caretAt(d.to); }, 30);
+  };
+  const end = commitMove => {
+    const d = ordDrag; ordDrag = null; if (!d) return;
+    clearTimeout(d.timer); clearInterval(d.auto);
+    if (d.ghost) d.ghost.remove();
+    const c = $('.ord-caret', strip); if (c) c.remove();
+    d.el.classList.remove('lifted');
+    if (commitMove && d.active) { const to = d.to > d.from ? d.to - 1 : d.to; if (to !== d.from) moveSection(d.from, to); }
+  };
+  strip.addEventListener('pointerdown', e => {
+    const el = itemAt(e.target); if (!el || !hasSecs()) return;
+    const from = +el.dataset.i;
+    ordDrag = { el, from, to: from, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, active: false, touch: e.pointerType === 'touch', id: e.pointerId };
+    // Touch: hold briefly to pick up (a quick swipe still scrolls the strip). Mouse: drag straight away.
+    if (ordDrag.touch) ordDrag.timer = setTimeout(() => { if (ordDrag && !ordDrag.active) { try { el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } lift(); } }, 260);
+  });
+  strip.addEventListener('pointermove', e => {
+    const d = ordDrag; if (!d || e.pointerId !== d.id) return;
+    d.x = e.clientX; d.y = e.clientY;
+    if (!d.active) {
+      const moved = Math.hypot(d.x - d.sx, d.y - d.sy);
+      if (d.touch) { if (moved > 8) { clearTimeout(d.timer); ordDrag = null; } return; }
+      if (moved > 5) { try { d.el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } lift(); } else return;
+    }
+    place(d.x, d.y);
+  });
+  strip.addEventListener('pointerup', e => {
+    const d = ordDrag; if (!d || e.pointerId !== d.id) return;
+    if (!d.active) { end(false); ordSel = d.from; renderOrderStrip(); showSection(d.from); return; }
+    end(true);
+  });
+  strip.addEventListener('pointercancel', () => end(false));
+  // Once an item is picked up, stop the page and the strip from scrolling under the finger.
+  strip.addEventListener('touchmove', e => { if (ordDrag && ordDrag.active) e.preventDefault(); }, { passive: false });
+  strip.addEventListener('contextmenu', e => e.preventDefault());
+  strip.addEventListener('keydown', e => {
+    const el = itemAt(e.target); if (!el) return;
+    const i = +el.dataset.i;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (e.altKey || e.shiftKey) moveSection(i, i + (e.key === 'ArrowLeft' ? -1 : 1));
+      else { ordSel = clamp(i + (e.key === 'ArrowLeft' ? -1 : 1), 0, S.tree.secs.length - 1); renderOrderStrip(); showSection(ordSel); }
+      const f = $(`.ord[data-i="${ordSel}"]`, strip); if (f) f.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ordSel = i; renderOrderStrip(); showSection(i); }
+  });
+  $('#ordEarlier').addEventListener('click', () => { if (hasSecs()) moveSection(ordSel, ordSel - 1); });
+  $('#ordLater').addEventListener('click', () => { if (hasSecs()) moveSection(ordSel, ordSel + 1); });
+})();
 function renderStyleStrip() {
   const strip = $('#styleStrip'); strip.textContent = '';
   const dpr = Math.min(2, window.devicePixelRatio || 1), saved = S.set.style;
@@ -2685,7 +2863,7 @@ function moveToSection(pid, v) {
   to.pids = leavesOf(to.tree).map(l => l.pid).concat(pid); to.tree = null;
   if (!from.tree) root.secs = root.secs.filter(s => s !== from);
   regenSections([to], false);
-  commit(); fitStage(); syncControls(); syncCellPane();
+  commit(); fitStage(); syncControls(); syncCellPane(); if (tab === 'layout') renderOrderStrip();
   toast(imageMode() ? `Moved to image ${root.secs.indexOf(to) + 1}` : `Moved to ${to.name || 'the new section'}`);
 }
 async function setSections(on, by) {
@@ -2998,7 +3176,7 @@ stage.addEventListener('pointerdown', e => { if (e.target === stage) select(null
 if (window.ResizeObserver) new ResizeObserver(() => fitStage()).observe(stage); else window.addEventListener('resize', fitStage);
 
 /* ================= start ================= */
-if (/[?&]debug\b/.test(location.search)) window.__gs = { S, DR, store, HIST, fitShape, leavesOf };
+if (/[?&]debug\b/.test(location.search)) window.__gs = { S, DR, store, HIST, fitShape, leavesOf, geom: () => lastGeom, kpx };
 buildFormatStrip(); buildColourPane(); buildFontStrip();
 S.active = makeSamples();
 generateLayouts(); applyCand(0, false);
