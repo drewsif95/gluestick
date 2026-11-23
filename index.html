@@ -263,6 +263,7 @@ select.txt{-webkit-appearance:none;appearance:none;padding-right:30px;background
 .btn.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
 .drafts-empty{margin:0;padding:18px;border-radius:14px;border:1.5px dashed var(--dash);text-align:center}
 @media (max-width:400px){.mark{font-size:20px}.bar{gap:6px}.bar-actions .icon-btn{width:36px}}
+.split-ctl{padding-top:6px;border-top:1px solid var(--line)}
 @media (prefers-reduced-motion:reduce){*{transition:none !important;animation-duration:0s !important}}
 </style>
 </head>
@@ -389,7 +390,8 @@ select.txt{-webkit-appearance:none;appearance:none;padding-right:30px;background
         <div class="row"><button class="btn sm" id="secByDay">Group by day</button><button class="btn sm" id="secByPlace">Group by place</button></div>
         <div class="pane" id="secList"></div>
         <label class="switch"><input type="checkbox" id="secHeads" data-flag="secHeads"> Show section headings</label>
-        <p class="hint">Sections stack in one image, or each becomes its own slide in a carousel. Group by day uses when each photo was taken; Group by place uses where. To move a photo, tap it and pick a section.</p>
+        <p class="hint" id="secImagesNote" hidden></p>
+        <p class="hint" id="secHint">Sections stack in one image, or each becomes its own slide in a carousel. Group by day uses when each photo was taken; Group by place uses where. To move a photo, tap it and pick a section.</p>
       </div>
       <div class="pane" data-tsub="captions" hidden>
         <div class="row between"><span class="label">Caption style</span><div class="seg" data-seg="capStyle" role="group" aria-label="Caption style"><button data-v="tag">Tag</button><button data-v="plain">Plain</button></div></div>
@@ -432,6 +434,14 @@ select.txt{-webkit-appearance:none;appearance:none;padding-right:30px;background
       <div class="pane" id="carouselCtl">
         <div class="row between"><span class="label">Slides</span><div class="stepper"><button id="slMinus" aria-label="Fewer slides">−</button><output id="slCount">3</output><button id="slPlus" aria-label="More slides">+</button></div></div>
         <div class="row between"><span class="label">Slide shape</span><div class="seg" data-seg="slideRatio" role="group" aria-label="Slide shape"><button data-v="4:5">4:5</button><button data-v="1:1">1:1</button><button data-v="3:4">3:4</button></div></div>
+      </div>
+      <div class="pane split-ctl">
+        <label class="switch"><input type="checkbox" id="splitOn"> Split into several images</label>
+        <div class="pane" id="splitOpts" hidden>
+          <div class="row between"><span class="label">Photos per image</span><div class="stepper"><button id="piMinus" aria-label="Fewer photos per image">−</button><output id="piCount">6</output><button id="piPlus" aria-label="More photos per image">+</button></div></div>
+          <div class="row between"><span class="label">Start a new one</span><div class="seg" id="splitBy" role="group" aria-label="How to split"><button data-v="order">In order</button><button data-v="day">Each day</button><button data-v="place">Each place</button></div></div>
+        </div>
+        <p class="hint" id="splitNote"></p>
       </div>
       <label class="switch" id="guideRow"><input type="checkbox" id="gridGuide"> Show profile-grid crop</label>
       <p class="hint" id="sizeHint"></p>

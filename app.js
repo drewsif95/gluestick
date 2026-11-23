@@ -24,7 +24,7 @@ function todayISO() { return isoDay(new Date()); }
 function niceDay(d) { try { return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }); } catch (e) { return isoDay(d); } }
 
 /* ================= constants & state ================= */
-const MAX_SIDE = 1800, MAX_PHOTOS = 30, PREV_MAX = 900, MAX_SECS = 10;
+const MAX_SIDE = 1800, MAX_PHOTOS = 30, PREV_MAX = 900, MAX_SECS = 10, MAX_FRAMES = 15;
 const FORMATS = {
   story:     { name: 'Story',     ratio: '9:16', w: 1080, h: 1920 },
   portrait:  { name: 'Portrait',  ratio: '4:5',  w: 1080, h: 1350 },
@@ -110,6 +110,7 @@ const S = {
     strips: 0, filmTilt: .15, sprockets: true, edgeText: true,
     look: 'none', lookAmt: .8, exposure: 0, contrast: 0, warmth: 0, saturation: 0, fade: 0,
     grain: .2, vignette: 0, leak: 0, dust: 0, dateStamp: false, date: todayISO(), dateFmt: 'yy', dateAuto: true, secBy: 'day',
+    perImage: 0, splitBy: 'order', // split into several images of up to perImage photos (0 = all in one)
     title: '', subtitle: '', titleFont: 'serif', titlePos: 'top', textAlign: 'center', titleSize: 1, textColor: 'auto',
     secHeads: true, capStyle: 'tag',
     seed: 3
@@ -117,17 +118,21 @@ const S = {
   preset: null // layout carried over from a favourite: { shape } or { secs: 'day' | 'place' }
 };
 const DEFAULT_SET = clone(S.set);
-let nodeSeq = 1, photoSeq = 1, tab = 'photos', lookSub = 'filters', textSub = 'title', EXPORTING = false, NO_LOOK = false, PSC = 1, viewOff = 0, gridGuide = false;
+let hintedSplit = false, lastPerImage = 6, nodeSeq = 1, photoSeq = 1, tab = 'photos', lookSub = 'filters', textSub = 'title', EXPORTING = false, NO_LOOK = false, PSC = 1, viewOff = 0, gridGuide = false;
 const borderColor = (style) => (S.set.border && S.set.border[style || S.set.style]) || '#ffffff';
 const hasSecs = () => !!(S.tree && S.tree.secs);
+const imageMode = () => S.set.perImage > 0;
 function dims() {
   const st = S.set;
   if (st.format === 'carousel') {
     const s = SLIDE[st.slideRatio] || SLIDE['4:5'];
-    const n = hasSecs() ? clamp(S.tree.secs.length, 1, MAX_SECS) : st.slides;
+    const n = hasSecs() ? clamp(S.tree.secs.length, 1, MAX_FRAMES) : st.slides;
     return { w: s.w * n, h: s.h, slides: n, slideW: s.w };
   }
-  const F = FORMATS[st.format] || FORMATS.story; return { w: F.w, h: F.h, slides: 0, slideW: F.w };
+  const F = FORMATS[st.format] || FORMATS.story;
+  // Several images: one frame of this size per group, side by side, saved as separate images.
+  if (imageMode() && hasSecs() && S.tree.secs.length > 1) { const n = Math.min(S.tree.secs.length, MAX_FRAMES); return { w: F.w * n, h: F.h, slides: n, slideW: F.w }; }
+  return { w: F.w, h: F.h, slides: 0, slideW: F.w };
 }
 
 /* ================= photos ================= */
@@ -607,6 +612,10 @@ function shapeOf(n, hero) {
 const shapeHasHero = x => !!x && (x.d ? shapeHasHero(x.a) || shapeHasHero(x.b) : !!x.h);
 const shapeCount = x => !x ? 0 : x.d ? shapeCount(x.a) + shapeCount(x.b) : 1;
 function layoutPreset() {
+  if (imageMode() && hasSecs()) {
+    const big = S.tree.secs.filter(s => s.tree).sort((a, b) => leavesOf(b.tree).length - leavesOf(a.tree).length)[0];
+    return big ? { shape: shapeOf(big.tree, S.hero) } : null;
+  }
   if (hasSecs()) return { secs: S.set.secBy === 'place' ? 'place' : 'day' };
   return S.tree ? { shape: shapeOf(S.tree, S.hero) } : null;
 }
@@ -675,6 +684,8 @@ function freshLayout() {
 function applyLayoutPreset(pre) {
   S.preset = pre ? clone(pre) : null;
   if (!pre || !S.active.length) return;
+  // Several images: the split decides the groups; a saved shape is used inside each image.
+  if (imageMode()) { if (pre.shape) { viewOff = 0; if (hasSecs()) regenSections('all', false); else freshLayout(); } return; }
   if (pre.secs) {
     if (!hasSecs() || S.set.secBy !== pre.secs) { S.set.secBy = pre.secs; buildSections(); viewOff = 0; }
     return;
@@ -691,11 +702,77 @@ function regenSections(which, pickRandom) {
     const s = R.sec; if (!s || (which !== 'all' && !which.includes(s))) return;
     const ids = s.tree ? leavesOf(s.tree).map(l => l.pid) : (s.pids || []).slice();
     if (!ids.length) { s.tree = null; return; }
-    const pool = genPool(ids, Math.max(.05, R.photo.w / Math.max(1, R.photo.h)), 0, S.hero, 3);
+    const CA = Math.max(.05, R.photo.w / Math.max(1, R.photo.h));
+    if (imageMode() && S.preset && S.preset.shape) { s.tree = fitShape(S.preset.shape, ids, CA); delete s.pids; return; }
+    const pool = genPool(ids, CA, 0, S.hero, 3);
     const pick = pickRandom ? pool[(Math.random() * pool.length) | 0] : pool[0];
     s.tree = cloneTree(pick.tree); delete s.pids;
   });
 }
+/* ================= several images ================= */
+// "Up to N photos per image": photos go in the order they were taken (undated ones last, in the
+// order added). By day or by place starts a new image for each, and every group is split as
+// evenly as possible: 30 photos at 6 make 5 images of 6; 31 make one of 6 and five of 5.
+function chronological(ids) {
+  return ids.map((id, i) => ({ id, i, t: S.photos.get(id).time }))
+    .sort((a, b) => a.t && b.t ? (a.t - b.t) || (a.i - b.i) : a.t ? -1 : b.t ? 1 : a.i - b.i)
+    .map(o => o.id);
+}
+function imageGroups(ids) {
+  const by = S.set.splitBy;
+  let groups = (by === 'place' && groupByPlace(ids)) || (by !== 'order' && groupByDay(ids)) || null;
+  if (!groups) groups = [{ key: 'all', ids: chronological(ids) }];
+  let N = Math.max(1, S.set.perImage | 0);
+  const frames = n => groups.reduce((a, g) => a + Math.ceil(g.ids.length / n), 0);
+  while (frames(N) > MAX_FRAMES) N++;
+  const out = [];
+  groups.forEach(g => {
+    const k = Math.ceil(g.ids.length / N), base = Math.floor(g.ids.length / k), extra = g.ids.length % k;
+    for (let j = 0, at = 0; j < k; j++) { const n = base + (j < extra ? 1 : 0); out.push({ g, part: j, ids: g.ids.slice(at, at + n) }); at += n; }
+  });
+  return out;
+}
+const dayStart = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+function buildImageSets() {
+  const ids = S.active.slice();
+  if (ids.length <= S.set.perImage) { S.tree = null; freshLayout(); return 1; }
+  const old = hasSecs() ? S.tree.secs : [], by = S.set.splitBy, parts = imageGroups(ids);
+  const firstDay = parts[0].g.date ? dayStart(parts[0].g.date) : null;
+  const secs = parts.map(p => {
+    const key = `img:${p.g.key || 'all'}#${p.part}`, prev = old.find(s => s.key === key);
+    let name = '';
+    if (by === 'place' && p.g.place) name = p.g.place;
+    else if (by !== 'order' && p.g.date && firstDay != null) name = `Day ${Math.round((dayStart(p.g.date) - firstDay) / 864e5) + 1}`;
+    const sec = { id: nodeSeq++, key, name: prev ? prev.name : name, pids: p.ids, tree: null };
+    sec.autoNote = by === 'order' ? '' : autoSecNote(sec);
+    sec.note = prev && prev.note !== prev.autoNote ? prev.note : sec.autoNote;
+    return sec;
+  });
+  S.tree = { id: nodeSeq++, secs };
+  regenSections('all', false);
+  return secs.length;
+}
+// Lay out the photos again after the set of photos (or the split) changes.
+function arrangeAll() {
+  if (!S.active.length) { S.tree = null; return; }
+  if (imageMode()) buildImageSets();
+  else if (hasSecs()) buildSections();
+  else { S.tree = null; freshLayout(); }
+}
+async function setSplit(perImage, splitBy) {
+  const was = imageMode();
+  if (perImage != null) S.set.perImage = perImage;
+  if (splitBy) S.set.splitBy = splitBy;
+  if (imageMode() && S.set.splitBy === 'place') { busy('Finding places…'); await resolvePlaces(); busy(null); }
+  if (imageMode()) {
+    const n = buildImageSets();
+    if (S.set.splitBy === 'place' && hasSecs() && !S.tree.secs.some(s => String(s.key).includes('place:'))) toast('These photos don’t include a location, so they’re split by day instead.', 3600);
+    else if (n > 1) toast(`Split into ${n} images`);
+    else toast(`All ${S.active.length} photos fit in one image`);
+  } else if (was && hasSecs()) { S.tree = null; freshLayout(); toast('Back to one image'); }
+  viewOff = 0; commit(); refreshAll();
+}
+
 function mergeSmallest(groups) {
   while (groups.length > MAX_SECS) {
     let bi = 0, bs = Infinity;
@@ -743,7 +820,7 @@ function groupByPlace(ids) {
 function autoSecNote(sec) {
   const ids = sec.pids || leavesOf(sec.tree).map(l => l.pid);
   const ps = ids.map(id => S.photos.get(id)).filter(Boolean), times = ps.map(p => p.time).filter(Boolean);
-  if (String(sec.key || '').startsWith('place:')) return dateRange(times, false);
+  if (String(sec.key || '').includes('place:')) return dateRange(times, false);
   const first = times.sort((a, b) => a - b)[0], place = topPlaces(ids)[0];
   return first ? (place ? `${niceDay(first)} · ${place}` : niceDay(first)) : (place || '');
 }
@@ -885,7 +962,9 @@ function headMetrics(st, sc) { const F = FONTS[st.titleFont] || FONTS.serif, k =
 /* frame: margins, title band and the regions (one per section) photos are laid out in */
 function frameFor(W, H, st, root) {
   const sc = unitScale(W, H), D = dims(), m = outerMargin(st) * sc;
-  let C = { x: m, y: m, w: Math.max(8, W - 2 * m), h: Math.max(8, H - 2 * m) };
+  const secs0 = root && root.secs, perSlide = !!(D.slides && secs0 && secs0.length), sw0 = D.slides ? W / D.slides : W;
+  // With one section per slide (or per image), the title goes on the first one only.
+  let C = { x: m, y: m, w: Math.max(8, (perSlide ? sw0 : W) - 2 * m), h: Math.max(8, H - 2 * m) };
   let title = null;
   if (hasTitle(st)) {
     const T = titleMetrics(st, sc);
@@ -895,11 +974,12 @@ function frameFor(W, H, st, root) {
   }
   const regions = [], secs = root && root.secs;
   if (secs && secs.length) {
-    const hb = st.secHeads ? headMetrics(st, sc).h : 0;
+    const named = secs.some(s => String(s.name || '').trim() || String(s.note || '').trim());
+    const hb = st.secHeads && named ? headMetrics(st, sc).h : 0;
     const mk = (r, s) => ({ rect: r, head: hb ? { x: r.x, y: r.y, w: r.w, h: hb } : null, photo: { x: r.x, y: r.y + hb, w: r.w, h: Math.max(8, r.h - hb) }, sec: s, tree: s.tree });
     if (D.slides) {
       const sw = W / D.slides;
-      secs.slice(0, D.slides).forEach((s, i) => { const x0 = i * sw + m, x1 = (i + 1) * sw - m; regions.push(mk({ x: x0, y: C.y, w: Math.max(8, x1 - x0), h: C.h }, s)); });
+      secs.slice(0, D.slides).forEach((s, i) => regions.push(mk(i === 0 ? Object.assign({}, C) : { x: i * sw + m, y: m, w: Math.max(8, sw - 2 * m), h: Math.max(8, H - 2 * m) }, s)));
     } else {
       const sg = innerGap(st) * sc, wts = secs.map(s => Math.pow(Math.max(1, secCount(s)), .75)), tot = wts.reduce((a, b) => a + b, 0);
       const avail = Math.max(8, C.h - sg * (secs.length - 1));
@@ -1757,8 +1837,10 @@ function syncCellPane() {
   $('#secRow').hidden = !hasSecs();
   if (hasSecs()) {
     const sel = $('#secSel'), cur = secIndexOf(pid); sel.textContent = '';
-    S.tree.secs.forEach((s, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = [s.name, s.note].filter(Boolean).join(' · ') || `Section ${i + 1}`; if (i === cur) o.selected = true; sel.appendChild(o); });
-    const o = document.createElement('option'); o.value = 'new'; o.textContent = '+ New section'; sel.appendChild(o);
+    const im = imageMode();
+    $('#secRow').querySelector('label').textContent = im ? 'Image' : 'Section';
+    S.tree.secs.forEach((s, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = im ? [`Image ${i + 1}`, s.name].filter(Boolean).join(' · ') : [s.name, s.note].filter(Boolean).join(' · ') || `Section ${i + 1}`; if (i === cur) o.selected = true; sel.appendChild(o); });
+    const o = document.createElement('option'); o.value = 'new'; o.textContent = im ? '+ New image' : '+ New section'; sel.appendChild(o);
   }
   $('#toolFeature').classList.toggle('on', S.hero === pid);
 }
@@ -1830,7 +1912,9 @@ function renderLayoutStrip() {
     b.addEventListener('click', () => { S.preset = null; applyCand(i); });
     strip.appendChild(b);
   });
-  $('#layoutHint').textContent = hasSecs()
+  $('#layoutHint').textContent = hasSecs() && imageMode()
+    ? 'Each image gets its own layout. Shuffle tries new ones; save a favourite with a layout to use the same one in every image.'
+    : hasSecs()
     ? 'Each section gets its own layout. Shuffle tries new ones; tap a photo and choose Feature to make it bigger.'
     : S.set.style === 'film'
       ? 'Film strip fills frames in layout order. Shuffle or pick a layout to change the order.'
@@ -1979,13 +2063,20 @@ function buildFontStrip() {
 }
 function renderSecList() {
   const box = $('#secList'); box.textContent = '';
+  const im = imageMode();
+  $('#secToggle').closest('label').hidden = im; $('#secByDay').closest('.row').hidden = im;
+  $('#secImagesNote').hidden = !im;
+  $('#secHint').hidden = im;
   $('#secToggle').checked = hasSecs();
   $('#secHeads').closest('label').hidden = !hasSecs();
+  if (im) $('#secImagesNote').textContent = hasSecs()
+    ? `Your photos are split into ${S.tree.secs.length} images (Size › Split into several images). Give an image a heading here, or reorder them.`
+    : 'All your photos fit in one image right now. Add more, or lower the number per image in Size.';
   if (!hasSecs()) return;
   const secs = S.tree.secs;
   secs.forEach((s, i) => {
     const row = document.createElement('div'); row.className = 'secrow';
-    const n = document.createElement('input'); n.className = 'txt sm'; n.value = s.name || ''; n.placeholder = `Day ${i + 1}`; n.maxLength = 30; n.setAttribute('aria-label', `Section ${i + 1} name`);
+    const n = document.createElement('input'); n.className = 'txt sm'; n.value = s.name || ''; n.placeholder = im ? `Image ${i + 1} heading` : `Day ${i + 1}`; n.maxLength = 30; n.setAttribute('aria-label', `${im ? 'Image' : 'Section'} ${i + 1} name`);
     const t = document.createElement('input'); t.className = 'txt sm'; t.value = s.note || ''; t.placeholder = 'Place or date'; t.maxLength = 40; t.setAttribute('aria-label', `Section ${i + 1} place or date`);
     n.addEventListener('input', () => { s.name = n.value; scheduleRender(false); });
     t.addEventListener('input', () => { s.note = t.value; scheduleRender(false); });
@@ -2061,7 +2152,15 @@ function syncControls() {
   $$('[data-sub]').forEach(p => { p.hidden = p.dataset.sub !== lookSub; });
   const car = st.format === 'carousel', D = dims();
   $('#carouselCtl').hidden = !car; $('#slCount').textContent = D.slides || st.slides;
-  $('#slMinus').disabled = $('#slPlus').disabled = hasSecs();
+  const im = imageMode(), nImg = im && hasSecs() ? S.tree.secs.length : 1;
+  $('#splitOn').checked = im; $('#splitOpts').hidden = !im;
+  $('#piCount').textContent = String(st.perImage || lastPerImage);
+  $$('#splitBy button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === st.splitBy)));
+  $('#piMinus').disabled = !im || st.perImage <= 2; $('#piPlus').disabled = !im || st.perImage >= 12;
+  $('#splitNote').textContent = !im ? `Keeps all ${S.active.length} photos in one image. Turn on to spread them over several, all in the same style.`
+    : nImg > 1 ? `${S.active.length} photos → ${nImg} images. Each is its own ${car ? 'slide' : FORMATS[st.format].name.toLowerCase()} in the same style; Save gives you all ${nImg}.`
+    : `All ${S.active.length} photos fit in one image at ${st.perImage} each.`;
+  $('#slMinus').disabled = $('#slPlus').disabled = hasSecs() || im;
   $('#gridGuide').checked = gridGuide; $('#guideRow').hidden = st.format === 'story';
   $('#sizeHint').textContent = car
     ? (hasSecs() ? 'Each section is its own slide, so the slide count follows your sections. Save gives you one image per slide.' : 'Photos flow across the slides. Save gives you one image per slide: post them in order as a single carousel.')
@@ -2258,12 +2357,16 @@ function favName() {
   return name;
 }
 function applySettings(set) {
-  const before = [S.set.format, S.set.slides, S.set.slideRatio, S.set.sizing].join('|');
+  const before = [S.set.format, S.set.slides, S.set.slideRatio, S.set.sizing].join('|'), split = [S.set.perImage, S.set.splitBy].join('|');
   const keep = {}; FAV_SKIP.forEach(k => { keep[k] = S.set[k]; });
   const next = Object.assign({}, S.set, clone(set), keep);
   if (set.border) next.border = Object.assign({}, S.set.border, set.border);
   S.set = next;
-  if ([S.set.format, S.set.slides, S.set.slideRatio, S.set.sizing].join('|') !== before) { viewOff = 0; relayout(); }
+  if ([S.set.perImage, S.set.splitBy].join('|') !== split) {
+    viewOff = 0;
+    if (imageMode()) buildImageSets(); else if (hasSecs() && String(S.tree.secs[0].key || '').startsWith('img:')) { S.tree = null; freshLayout(); }
+    relayout();
+  } else if ([S.set.format, S.set.slides, S.set.slideRatio, S.set.sizing].join('|') !== before) { viewOff = 0; relayout(); }
   else { syncControls(); fitStage(); }
   if (tab === 'look') renderLookStrip();
 }
@@ -2573,8 +2676,9 @@ function moveToSection(pid, v) {
   const from = root.secs[fromI];
   let to;
   if (v === 'new') {
-    if (root.secs.length >= MAX_SECS) { toast(`Up to ${MAX_SECS} sections.`); syncCellPane(); return; }
-    to = { id: nodeSeq++, key: null, name: `Day ${root.secs.length + 1}`, note: '', pids: [], tree: null };
+    const cap = imageMode() ? MAX_FRAMES : MAX_SECS;
+    if (root.secs.length >= cap) { toast(imageMode() ? `Up to ${cap} images.` : `Up to ${cap} sections.`); syncCellPane(); return; }
+    to = { id: nodeSeq++, key: imageMode() ? `img:new${nodeSeq}` : null, name: imageMode() ? '' : `Day ${root.secs.length + 1}`, note: '', autoNote: '', pids: [], tree: null };
     root.secs.splice(fromI + 1, 0, to);
   } else { to = root.secs[+v]; if (!to || to === from) return; }
   from.tree = removeLeaf(from.tree, pid);
@@ -2582,7 +2686,7 @@ function moveToSection(pid, v) {
   if (!from.tree) root.secs = root.secs.filter(s => s !== from);
   regenSections([to], false);
   commit(); fitStage(); syncControls(); syncCellPane();
-  toast(`Moved to ${to.name || 'the new section'}`);
+  toast(imageMode() ? `Moved to image ${root.secs.indexOf(to) + 1}` : `Moved to ${to.name || 'the new section'}`);
 }
 async function setSections(on, by) {
   if (!S.active.length) return;
@@ -2619,8 +2723,9 @@ async function addFiles(files) {
   S.active = real.concat(added.map(p => p.id));
   if (hadSamples) { S.caps = {}; S.hero = null; }
   select(null);
-  if (hasSecs()) buildSections(); else { S.tree = null; freshLayout(); }
+  arrangeAll();
   commit(); refreshAll();
+  if (!imageMode() && S.active.length > 12 && !hintedSplit) { hintedSplit = true; setTimeout(() => toast('That’s a lot for one image. Size › Split into several images spreads them out.', 4500), 2900); }
   let msg = `Added ${added.length} photo${added.length > 1 ? 's' : ''}`;
   if (failed) msg += ` · ${failed} couldn’t be opened`;
   if (list.length > take.length) msg += ` · limit is ${MAX_PHOTOS}`;
@@ -2681,18 +2786,19 @@ function initSaver() {
 }
 function updateSaveUI() {
   const n = saveItems.length, many = n > 1, app = !!(saver && saver.share), kind = saver && saver.kind;
+  const U = S.set.format === 'carousel' ? 'slides' : 'images';
   $('#saveBtn').hidden = !saver;
   $('#shareBtn').hidden = !app;
-  $('#saveBtn').textContent = app ? (many ? `Save ${n} slides to Photos` : 'Save to Photos')
-    : kind === 'sheet' ? (many ? `Save or share ${n} slides` : 'Save or share')
-    : kind === 'download' ? (many ? `Download ${n} slides` : 'Download JPEG')
-    : (many ? `Save ${n} slides` : 'Save JPEG');
+  $('#saveBtn').textContent = app ? (many ? `Save ${n} ${U} to Photos` : 'Save to Photos')
+    : kind === 'sheet' ? (many ? `Save or share ${n} ${U}` : 'Save or share')
+    : kind === 'download' ? (many ? `Download ${n} ${U}` : 'Download JPEG')
+    : (many ? `Save ${n} ${U}` : 'Save JPEG');
   $('#saveBtn').disabled = $('#shareBtn').disabled = saving || rendering || !n;
   if (kind === 'sheet' || kind === 'download') {
     $('#saveHint').textContent = kind === 'sheet'
-      ? (many ? 'Opens the share sheet with every slide. Tap Save Images to put them in Photos in order, or send them to Instagram.'
+      ? (many ? `Opens the share sheet with all ${n} ${U}. Tap Save Images to put them in Photos in order, or send them to Instagram.`
               : 'Opens the share sheet. Tap Save Image to put it in Photos, or send it to Instagram, Messages and more.')
-      : (many ? 'Each slide downloads as its own JPEG, numbered in order for a carousel.' : 'Saves a full-quality JPEG to your Downloads.');
+      : (many ? `Each of the ${n} ${U} downloads as its own JPEG, numbered in order.` : 'Saves a full-quality JPEG to your Downloads.');
     return;
   }
   $('#saveHint').textContent = app
@@ -2736,7 +2842,7 @@ async function refreshSave() {
   else { const strip = document.createElement('div'); strip.className = 'save-strip'; saveItems.forEach((it, i) => { const im = document.createElement('img'); im.alt = `Slide ${i + 1}`; im.src = it.url; strip.appendChild(im); }); prev.appendChild(strip); }
   $('#saveSpin').hidden = true;
   const it = saveItems[0], mb = saveItems.reduce((s, x) => s + x.blob.size, 0) / 1048576;
-  $('#saveMeta').textContent = saveItems.length > 1 ? `${saveItems.length} slides · ${it.W} × ${it.H} px each` : `${it.W} × ${it.H} px · ${mb.toFixed(1)} MB`;
+  $('#saveMeta').textContent = saveItems.length > 1 ? `${saveItems.length} ${S.set.format === 'carousel' ? 'slides' : 'images'} · ${it.W} × ${it.H} px each` : `${it.W} × ${it.H} px · ${mb.toFixed(1)} MB`;
   updateSaveUI();
 }
 function openSave() {
@@ -2754,7 +2860,7 @@ async function doSave() {
   saving = true; updateSaveUI();
   try {
     await saver.save(saveItems.map(it => it.blob), names, i => { if (n > 1) toast(`Saving slide ${i + 1} of ${n}…`, 2000); });
-    if (saver.kind !== 'sheet') toast(n > 1 ? `Saved ${n} slides` : 'Saved'); // the share sheet confirms for itself
+    if (saver.kind !== 'sheet') toast(n > 1 ? `Saved ${n} ${S.set.format === 'carousel' ? 'slides' : 'images'}` : 'Saved'); // the share sheet confirms for itself
   } catch (err) {
     const code = err && err.code, done = (err && err.done) || 0;
     if (code === 'cancelled') toast(n > 1 && done ? `Stopped after ${done} of ${n} slides` : 'Save cancelled');
@@ -2803,6 +2909,10 @@ $('#dateIn').addEventListener('change', e => { if (e.target.value) { S.set.date 
 $$('#lookSub button').forEach(b => b.addEventListener('click', () => { lookSub = b.dataset.v; syncControls(); }));
 $$('#textSub button').forEach(b => b.addEventListener('click', () => { textSub = b.dataset.v; renderTextPane(); }));
 $('#resetAdj').addEventListener('click', () => { ADJ_KEYS.forEach(k => { S.set[k] = 0; }); syncControls(); scheduleRender(false); commit(); });
+$('#splitOn').addEventListener('change', e => { activeFav = null; setSplit(e.target.checked ? (S.set.perImage || lastPerImage) : 0); });
+$('#piMinus').addEventListener('click', () => { if (imageMode() && S.set.perImage > 2) { activeFav = null; lastPerImage = S.set.perImage - 1; setSplit(lastPerImage); } });
+$('#piPlus').addEventListener('click', () => { if (imageMode() && S.set.perImage < 12) { activeFav = null; lastPerImage = S.set.perImage + 1; setSplit(lastPerImage); } });
+$$('#splitBy button').forEach(b => b.addEventListener('click', () => { if (S.set.splitBy === b.dataset.v) return; activeFav = null; if (imageMode()) setSplit(null, b.dataset.v); else { S.set.splitBy = b.dataset.v; syncControls(); } }));
 $('#slMinus').addEventListener('click', () => { if (S.set.slides <= 2 || hasSecs()) return; S.set.slides--; viewOff = 0; relayout(); commit(); });
 $('#slPlus').addEventListener('click', () => { if (S.set.slides >= 10 || hasSecs()) return; S.set.slides++; relayout(); commit(); });
 $('#gridGuide').addEventListener('change', e => { gridGuide = e.target.checked; drawOverlay(); });
