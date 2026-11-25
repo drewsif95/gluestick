@@ -24,7 +24,7 @@ function todayISO() { return isoDay(new Date()); }
 function niceDay(d) { try { return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }); } catch (e) { return isoDay(d); } }
 
 /* ================= constants & state ================= */
-const MAX_SIDE = 1800, MAX_PHOTOS = 30, PREV_MAX = 900, MAX_SECS = 10, MAX_FRAMES = 15;
+const MAX_SIDE = 1800, MAX_PHOTOS = 90, PREV_MAX = 900, MID_MAX = 480, MAX_SECS = 10, MAX_FRAMES = 15, MAX_CANVAS_PX = 16777216;
 const FORMATS = {
   story:     { name: 'Story',     ratio: '9:16', w: 1080, h: 1920 },
   portrait:  { name: 'Portrait',  ratio: '4:5',  w: 1080, h: 1350 },
@@ -165,13 +165,17 @@ function canvasToImage(c, q) {
   });
 }
 function loadImg(url) { return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('decode')); im.src = url; }); }
-function makePhoto(src, w, h, name, sample, time, fixedId) {
+// `into`: a photo map being built (opening a draft); otherwise the photo joins the current collage.
+function makePhoto(src, w, h, name, sample, time, fixedId, into) {
   const id = fixedId || 'p' + (photoSeq++);
-  const s = 168 / Math.max(w, h);
-  const thumb = downscale(src, w, h, Math.max(1, Math.round(w * s)), Math.max(1, Math.round(h * s)));
-  const p = { id, src, w, h, a: w / h, name, sample, time: time || null, thumb, thumbURL: thumb.toDataURL('image/jpeg', .82), lk: {}, lkPend: {}, blurMid: null };
-  S.photos.set(id, p);
-  S.crops[id] = { z: 1, fx: .5, fy: .5 };
+  // A small copy for drawing on screen, where a photo is usually far smaller than the size it's kept at
+  // (90 photos in one image are about 100 px each). Saving always uses the full-size photo.
+  const km = Math.min(1, MID_MAX / Math.max(w, h)), mid = km < 1 ? downscale(src, w, h, Math.max(1, Math.round(w * km)), Math.max(1, Math.round(h * km))) : null;
+  const s = 168 / Math.max(w, h), base = mid || src;
+  const thumb = downscale(base, base.width || w, base.height || h, Math.max(1, Math.round(w * s)), Math.max(1, Math.round(h * s)));
+  const p = { id, src, mid, w, h, a: w / h, name, sample, time: time || null, thumb, thumbURL: thumb.toDataURL('image/jpeg', .82), lk: {}, lkPend: {}, blurMid: null };
+  if (into) into.set(id, p);
+  else { S.photos.set(id, p); S.crops[id] = { z: 1, fx: .5, fy: .5 }; }
   return p;
 }
 /* ================= photo metadata ================= */
@@ -335,10 +339,15 @@ function resolvePlaces() {
   return placesJob;
 }
 function onPlacesResolved() {
+  let changed = false;
   if (hasSecs()) S.tree.secs.forEach(sec => {
     if (sec.autoNote == null || sec.note !== sec.autoNote) return; // keep anything the user typed
-    sec.note = sec.autoNote = autoSecNote(sec);
+    const note = autoSecNote(sec); if (note !== sec.note) changed = true;
+    sec.note = sec.autoNote = note;
   });
+  // Not an undo step of its own: fold the new notes into the current state, so undo doesn't bring back a
+  // note without its place, and the draft picks them up.
+  if (changed && HIST.i >= 0) { HIST.stack[HIST.i] = snap(); queueDraft(); }
   renderPhotoStrip();
   if (tab === 'text') renderTextPane();
   scheduleRender(false);
@@ -475,11 +484,11 @@ const SAMPLES = [
     for (let i = 0; i < 70; i++) { x.fillStyle = fl[(R() * fl.length) | 0]; x.beginPath(); x.arc(R() * w, h * (.74 + R() * .24), 2 + R() * 4, 0, 7); x.fill(); }
   } }
 ];
-function paintSample(i, fixedId) {
+function paintSample(i, fixedId, into) {
   const s = SAMPLES[i], c = canvasEl(s.w, s.h), x = c.getContext('2d');
   s.paint(x, s.w, s.h, mulberry32(101 + i * 977));
   const [Y, M, D, h, m] = s.when;
-  const p = makePhoto(c, s.w, s.h, s.name, true, new Date(Y, M, D, h, m), fixedId);
+  const p = makePhoto(c, s.w, s.h, s.name, true, new Date(Y, M, D, h, m), fixedId, into);
   p.timeSrc = 'exif'; [p.lat, p.lon, p.place] = s.where; p.cc = 'PT'; p.sampleIdx = i;
   return p;
 }
@@ -492,7 +501,7 @@ const mkSplit = (dir, a, b) => ({ id: nodeSeq++, dir, r: .5, t: 0, a, b });
 function leavesOf(n, out = []) { if (!n) return out; if (n.secs) { n.secs.forEach(s => leavesOf(s.tree, out)); return out; } if (isLeaf(n)) out.push(n); else { leavesOf(n.a, out); leavesOf(n.b, out); } return out; }
 function cloneTree(n) {
   if (!n) return null;
-  if (n.secs) return { id: n.id, secs: n.secs.map(s => ({ id: s.id, key: s.key || null, name: s.name || '', note: s.note || '', pids: s.pids ? s.pids.slice() : undefined, tree: cloneTree(s.tree) })) };
+  if (n.secs) return { id: n.id, secs: n.secs.map(s => ({ id: s.id, key: s.key || null, name: s.name || '', note: s.note || '', autoName: s.autoName, autoNote: s.autoNote, pids: s.pids ? s.pids.slice() : undefined, tree: cloneTree(s.tree) })) };
   return isLeaf(n) ? { id: n.id, pid: n.pid } : { id: n.id, dir: n.dir, r: n.r, t: n.t, a: cloneTree(n.a), b: cloneTree(n.b) };
 }
 function sigS(n) { if (!n) return '-'; if (n.secs) return 'S[' + n.secs.map(s => sigS(s.tree)).join('|') + ']'; return isLeaf(n) ? 'L' : n.dir + '(' + sigS(n.a) + ',' + sigS(n.b) + ')'; }
@@ -574,7 +583,15 @@ function scoreTree(tree, asp, CA, slides, hero) {
     }
   }
   let score = (loss + pen) / cells.length;
-  if (hero) { const hc = cells.find(c => c.pid === hero); if (hc) { const share = hc.w * hc.h / CA, want = Math.max(.3, 1.6 / cells.length); if (share < want) score += (want - share) * 6; } }
+  if (hero) {
+    const hc = cells.find(c => c.pid === hero);
+    if (hc) {
+      const share = hc.w * hc.h / CA, want = Math.max(.3, 1.6 / cells.length); if (share < want) score += (want - share) * 6;
+      // "Featured" promises the biggest spot, so a layout where another photo is bigger ranks last.
+      const other = Math.max(0, ...cells.filter(c => c.pid !== hero).map(c => c.w * c.h / CA));
+      if (other >= share) score += 1 + (other - share) * 6;
+    }
+  }
   return score;
 }
 function genPool(ids, CA, slides, hero, count) {
@@ -733,17 +750,24 @@ function imageGroups(ids) {
   return out;
 }
 const dayStart = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+// Keep a section's old heading only if the user typed it; automatic ones ("Day 2", a place) are worked
+// out again, since adding earlier photos renumbers the days. Sections saved before autoName existed
+// count as automatic when they look it.
+const autoNamed = s => s.autoName != null ? s.name === s.autoName
+  : !s.name || /^Day \d+$/.test(s.name) || String(s.key || '').includes('place:' + s.name);
+const keepName = (prev, auto) => prev && !autoNamed(prev) ? prev.name : auto;
 function buildImageSets() {
-  const ids = S.active.slice();
-  if (ids.length <= S.set.perImage) { S.tree = null; freshLayout(); return 1; }
-  const old = hasSecs() ? S.tree.secs : [], by = S.set.splitBy, parts = imageGroups(ids);
+  const ids = S.active.slice(), parts = ids.length ? imageGroups(ids) : [];
+  // One image when everything fits, but each day (or place) still starts its own image.
+  if (parts.length <= 1) { S.tree = null; freshLayout(); return 1; }
+  const old = hasSecs() ? S.tree.secs : [], by = S.set.splitBy;
   const firstDay = parts[0].g.date ? dayStart(parts[0].g.date) : null;
   const secs = parts.map(p => {
     const key = `img:${p.g.key || 'all'}#${p.part}`, prev = old.find(s => s.key === key);
     let name = '';
     if (by === 'place' && p.g.place) name = p.g.place;
     else if (by !== 'order' && p.g.date && firstDay != null) name = `Day ${Math.round((dayStart(p.g.date) - firstDay) / 864e5) + 1}`;
-    const sec = { id: nodeSeq++, key, name: prev ? prev.name : name, pids: p.ids, tree: null };
+    const sec = { id: nodeSeq++, key, name: keepName(prev, name), autoName: name, pids: p.ids, tree: null };
     sec.autoNote = by === 'order' ? '' : autoSecNote(sec);
     sec.note = prev && prev.note !== prev.autoNote ? prev.note : sec.autoNote;
     return sec;
@@ -830,7 +854,7 @@ function buildSections() {
   let secs;
   if (groups && groups.length && groups[0].place) {
     secs = groups.map(g => {
-      const prev = old.find(s => s.key === g.key), sec = { id: nodeSeq++, key: g.key, name: prev ? prev.name : g.place, pids: g.ids, tree: null };
+      const prev = old.find(s => s.key === g.key), sec = { id: nodeSeq++, key: g.key, name: keepName(prev, g.place), autoName: g.place, pids: g.ids, tree: null };
       sec.autoNote = autoSecNote(sec); sec.note = prev && prev.note !== prev.autoNote ? prev.note : sec.autoNote;
       return sec;
     });
@@ -839,7 +863,7 @@ function buildSections() {
     secs = groups.map(g => {
       const prev = old.find(s => s.key === g.key);
       const day = Math.round((new Date(g.date.getFullYear(), g.date.getMonth(), g.date.getDate()) - first) / 86400000) + 1;
-      const sec = { id: nodeSeq++, key: g.key, name: prev ? prev.name : `Day ${day}`, pids: g.ids, tree: null };
+      const sec = { id: nodeSeq++, key: g.key, name: keepName(prev, `Day ${day}`), autoName: `Day ${day}`, pids: g.ids, tree: null };
       sec.autoNote = autoSecNote(sec); sec.note = prev && prev.note !== prev.autoNote ? prev.note : sec.autoNote;
       return sec;
     });
@@ -1067,7 +1091,7 @@ function sourceFor(p) {
   const key = lookKey();
   if (key === 'none') return p.src;
   const full = p.lk.full, prev = p.lk.prev;
-  if (full && full.key === key) return full.src;
+  if (full && full.key === key) return full.src || p.src;
   if (!EXPORTING && prev && prev.key === key) return prev.src;
   queueLook(p, EXPORTING ? 'full' : 'prev');
   const pv = p.lk.prev, fu = p.lk.full;
@@ -1077,17 +1101,25 @@ function queueLook(p, slot) { const key = lookKey(); if (p.lkPend[slot] === key)
 async function pumpLooks() {
   if (lookBusy) return;
   lookBusy = true;
-  while (lookQueue.length) {
-    const { p, slot } = lookQueue.shift(), key = lookKey();
-    if (key === 'none' || p.lkPend[slot] !== key || (p.lk[slot] && p.lk[slot].key === key)) continue;
-    await processLook(p, slot, key);
-    if (slot === 'prev') scheduleRender(false);
-    await new Promise(r => setTimeout(r, 0));
-  }
-  lookBusy = false;
+  try {
+    while (lookQueue.length) {
+      const { p, slot } = lookQueue.shift(), key = lookKey();
+      if (key === 'none' || p.lkPend[slot] !== key || (p.lk[slot] && p.lk[slot].key === key)) continue;
+      try { await processLook(p, slot, key); }
+      catch (e) {
+        // Usually out of canvas memory on an older phone. Use the photo without the look rather than
+        // stall the queue (which would leave Save on "Rendering…" for good).
+        console.warn('look failed', e);
+        if (slot === 'full') p.lk.full = { key, src: null };
+      }
+      if (slot === 'prev') scheduleRender(false);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  } finally { lookBusy = false; }
 }
 async function processLook(p, slot, key) {
-  const k = slot === 'full' ? 1 : Math.min(1, PREV_MAX / Math.max(p.w, p.h));
+  // Previews of a look are smaller when there are lots of photos, to stay within the phone's canvas memory.
+  const k = slot === 'full' ? 1 : Math.min(1, (S.active.length > 30 ? MID_MAX : PREV_MAX) / Math.max(p.w, p.h));
   const c = canvasEl(p.w * k, p.h * k), x = c.getContext('2d', { willReadFrequently: true });
   x.imageSmoothingQuality = 'high';
   x.drawImage(p.src, 0, 0, c.width, c.height);
@@ -1121,7 +1153,12 @@ function coverRect(pw, ph, x, y, w, h, c) { const s = Math.max(w / pw, h / ph) *
 function drawPhoto(ctx, pid, x, y, w, h) {
   const p = S.photos.get(pid); if (!p) return;
   const r = coverRect(p.w, p.h, x, y, w, h, cropOf(pid));
-  ctx.drawImage(sourceFor(p), r.dx, r.dy, r.dw, r.dh);
+  let src = sourceFor(p);
+  if (src === p.src && p.mid && !EXPORTING) {
+    const t = ctx.getTransform(), need = Math.max(r.dw, r.dh) * Math.hypot(t.a, t.b);
+    if (need <= MID_MAX) src = p.mid;
+  }
+  ctx.drawImage(src, r.dx, r.dy, r.dw, r.dh);
 }
 const fontCss = (spec, px) => `${spec.st} ${spec.w} ${Math.max(1, px).toFixed(2)}px ${spec.fam}`;
 function measureT(ctx, t, px, tr) { if (!tr) return ctx.measureText(t).width; let w = 0, n = 0; for (const ch of t) { w += ctx.measureText(ch).width; n++; } return w + tr * px * Math.max(0, n - 1); }
@@ -1371,7 +1408,8 @@ function tornLayer(g, draft) {
 function paintTorn(ctx, g, opt) {
   paintBackground(ctx, g);
   for (const L of g.leaves) { ctx.save(); polyPath(ctx, L.poly); ctx.clip(); drawPhotoFx(ctx, L.pid, L.px, L.py, L.pw, L.ph, L.node.id); ctx.restore(); }
-  if (opt.preview) ctx.drawImage(tornLayer(g, opt.draft), 0, 0);
+  // The cached layer spans every image side by side; past WebKit's canvas size limit (16.7 MP on iOS) draw directly.
+  if (opt.preview && g.W * g.H <= MAX_CANVAS_PX) ctx.drawImage(tornLayer(g, opt.draft), 0, 0);
   else drawTornStrips(ctx, g, !!opt.draft);
 }
 
@@ -1546,6 +1584,9 @@ function fitStage() {
   if (!scrub.hidden) {
     const mh = Math.max(24, Math.min(52, (aw - 12) / asp)), sw = Math.round(mh * asp + 12), shh = Math.round(mh + 12);
     scrub.style.width = sw + 'px'; scrub.style.height = shh + 'px'; scrub.width = Math.round(sw * dpr); scrub.height = Math.round(shh * dpr); mini = null;
+    $('#toast').style.bottom = (12 + ctaH + shh + 8) + 'px'; // messages sit above the overview, not on it
+  } else {
+    $('#toast').style.bottom = ctaH ? (12 + ctaH) + 'px' : '';
   }
   scheduleRender(false);
 }
@@ -1677,7 +1718,7 @@ function drawOverlay() {
 }
 
 /* ================= interaction ================= */
-const pointers = new Map();
+const pointers = new Map(), HOLD_MS = 350, HOLD_SELECTED_MS = 650;
 let lpTimer = 0;
 function pt(e) { const r = ov.getBoundingClientRect(), k = ov.width / r.width; return { x: (e.clientX - r.left) * k + (lastGeom ? lastGeom.off : 0), y: (e.clientY - r.top) * k }; }
 const kpx = () => ov.width / Math.max(1, ov.getBoundingClientRect().width);
@@ -1732,7 +1773,10 @@ ov.addEventListener('pointerdown', e => {
   if (d) { gesture = { type: 'div', d, start: p, r0: d.node.r, changed: false }; drawOverlay(); return; }
   const L = hitLeaf(g, p);
   if (!L) { select(null); gesture = null; return; }
-  if (S.sel !== L.pid) select(L.pid);
+  // Pressing the photo that's already selected usually means a careful crop, which often starts with a
+  // pause, so it takes a longer hold to pick it up.
+  const wasSel = S.sel === L.pid;
+  if (!wasSel) select(L.pid);
   gesture = { type: 'pan', L, start: p, last: p, moved: false, changed: false };
   clearTimeout(lpTimer);
   lpTimer = setTimeout(() => {
@@ -1742,7 +1786,7 @@ ov.addEventListener('pointerdown', e => {
       if (NATIVE && NATIVE.haptic) NATIVE.haptic();
       drawOverlay();
     }
-  }, 350);
+  }, wasSel ? HOLD_SELECTED_MS : HOLD_MS);
 });
 ov.addEventListener('pointermove', e => {
   if (!pointers.has(e.pointerId)) return;
@@ -1817,6 +1861,8 @@ function endPointer(e) {
   }
   if (gesture.type === 'drag') {
     clearInterval(dragAutoScroll.t);
+    // A cancelled touch (a call, a system gesture) drops the photo where it came from.
+    if (e.type === 'pointercancel') { gesture = null; scheduleRender(false); return; }
     const t = gesture.target, R = gesture.region, pid = gesture.L.pid;
     if (t && t.pid !== pid) { swapPids(pid, t.pid); commit(); toast('Swapped', 1200); }
     else if (R) { gesture = null; moveToSection(pid, String(S.tree.secs.indexOf(R.sec))); renderOrderStrip(); scheduleRender(false); return; }
@@ -1844,7 +1890,10 @@ document.addEventListener('gesturestart', e => e.preventDefault());
 function swapPids(a, b) {
   const ls = leavesOf(S.tree), la = ls.find(l => l.pid === a), lb = ls.find(l => l.pid === b);
   if (!la || !lb) return;
+  if (hasSecs() && secIndexOf(a) !== secIndexOf(b)) S.tree.manual = true; // across images: adding photos would undo it
   la.pid = b; lb.pid = a;
+  // Featured means the big spot, so the photo moved into it is now the featured one.
+  if (S.hero === a) S.hero = b; else if (S.hero === b) S.hero = a;
   const ia = S.active.indexOf(a), ib = S.active.indexOf(b);
   if (ia > -1 && ib > -1) { S.active[ia] = b; S.active[ib] = a; }
   renderPhotoStrip(); if (S.sel) syncCellPane();
@@ -1893,6 +1942,7 @@ function setTab(t) {
   tab = t;
   if (S.sel) S.sel = null;
   setSwap(false);
+  $('.panes').scrollTop = 0; // each tab opens at its top, not wherever the last one was scrolled to
   $$('.tab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
   showPanes();
   if (t === 'layout') renderLayoutStrip();
@@ -2014,7 +2064,7 @@ function showSection(i) {
 function moveSection(from, to) {
   const secs = S.tree.secs; if (from === to || to < 0 || to >= secs.length) return;
   const [m] = secs.splice(from, 1); secs.splice(to, 0, m);
-  ordSel = to; commit(); scheduleRender(false); renderOrderStrip(); showSection(to);
+  S.tree.manual = true; ordSel = to; commit(); scheduleRender(false); renderOrderStrip(); showSection(to);
   if (tab === 'text') renderTextPane();
   const im = imageMode() || !!dims().slides;
   toast(`Moved to ${im ? (S.set.format === 'carousel' ? 'slide' : 'image') : 'section'} ${to + 1}`, 1600);
@@ -2261,8 +2311,8 @@ function renderSecList() {
     [n, t].forEach(el => el.addEventListener('change', () => commit()));
     const up = document.createElement('button'); up.className = 'mini'; up.textContent = '↑'; up.disabled = i === 0; up.setAttribute('aria-label', 'Move section up');
     const dn = document.createElement('button'); dn.className = 'mini'; dn.textContent = '↓'; dn.disabled = i === secs.length - 1; dn.setAttribute('aria-label', 'Move section down');
-    up.addEventListener('click', () => { secs.splice(i - 1, 0, secs.splice(i, 1)[0]); commit(); renderSecList(); scheduleRender(false); });
-    dn.addEventListener('click', () => { secs.splice(i + 1, 0, secs.splice(i, 1)[0]); commit(); renderSecList(); scheduleRender(false); });
+    up.addEventListener('click', () => { secs.splice(i - 1, 0, secs.splice(i, 1)[0]); S.tree.manual = true; commit(); renderSecList(); scheduleRender(false); });
+    dn.addEventListener('click', () => { secs.splice(i + 1, 0, secs.splice(i, 1)[0]); S.tree.manual = true; commit(); renderSecList(); scheduleRender(false); });
     const cnt = document.createElement('small'); const c = secCount(s); cnt.textContent = `${c} photo${c === 1 ? '' : 's'}`;
     row.append(n, t, up, dn, cnt); box.appendChild(row);
   });
@@ -2458,10 +2508,16 @@ function idbStore() {
         t.onerror = t.onabort = () => bad(t.error);
       });
       const get = k => run('readonly', s => s.get(k)).then(v => v == null ? null : v);
+      // Photos are stored as Blobs. Safari's Private Browsing can't keep Blobs in IndexedDB (the
+      // transaction fails), but it can keep their bytes, so those are stored as { type, data } instead.
+      const getBlob = k => get(k).then(v => !v ? null : v instanceof Blob ? v : v.data ? new Blob([v.data], { type: v.type || 'image/jpeg' }) : null);
       resolve({
-        getJSON: get, getBlob: get,
+        getJSON: get, getBlob,
         setJSON: (k, v) => run('readwrite', s => s.put(v, k)),
-        setBlob: (k, b) => run('readwrite', s => s.put(b, k)),
+        setBlob: (k, b) => run('readwrite', s => s.put(b, k)).catch(async () => {
+          const data = await b.arrayBuffer();
+          return run('readwrite', s => s.put({ type: b.type, data }, k));
+        }),
         del: k => run('readwrite', s => s.delete(k)),
         delDir: id => run('readwrite', s => s.delete(IDBKeyRange.bound(id + '/', id + '/\uffff'))),
       });
@@ -2672,7 +2728,16 @@ function queueDraft() {
   clearTimeout(DR.timer); DR.timer = setTimeout(flushDraft, 1200);
 }
 function saveIndex() { if (DR.store) DR.chain = DR.chain.then(() => DR.store.setJSON('index', DR.index)).catch(() => {}); }
-function dropPhotos(map) { map.forEach(p => { if (p.src && p.src._url) URL.revokeObjectURL(p.src._url); }); }
+function dropPhotos(map) {
+  map.forEach(p => {
+    if (p.src && p.src._url) URL.revokeObjectURL(p.src._url);
+    const full = p.lk.full && p.lk.full.src; if (full && full._url) URL.revokeObjectURL(full._url);
+    // WebKit caps total canvas memory, so give it back now rather than at the next garbage collection.
+    // (p.src stays: a draft save still in flight may need it.)
+    [p.thumb, p.mid, p.blurMid, p.lk.prev && p.lk.prev.src].forEach(c => { if (c && c.getContext && c !== p.src) c.width = c.height = 0; });
+    p.lk = {}; p.blurMid = null; p.mid = null;
+  });
+}
 function maxNodeId(n) {
   if (!n) return 0;
   let m = n.id || 0;
@@ -2686,14 +2751,15 @@ async function loadDraft(id) {
   const data = await DR.store.getJSON(`${id}/state`).catch(() => null);
   if (!data || !data.state) { toast('That collage couldn’t be opened.'); return false; }
   DR.loading = true; busy('Opening collage…');
-  const oldPhotos = S.photos, oldCrops = S.crops;
-  S.photos = new Map(); S.crops = {};
+  // Load into a map of its own: the collage on screen keeps working (renders, taps, places arriving)
+  // until everything is in, then the new one is swapped in at once.
+  const next = new Map();
   try {
     let maxSeq = 0;
     for (const m of data.photos || []) {
       maxSeq = Math.max(maxSeq, parseInt(String(m.id).slice(1), 10) || 0);
       let p = null;
-      if (m.sample != null && SAMPLES[m.sample]) p = paintSample(m.sample, m.id);
+      if (m.sample != null && SAMPLES[m.sample]) p = paintSample(m.sample, m.id, next);
       else {
         const blob = await DR.store.getBlob(`${id}/${m.id}`).catch(() => null);
         if (!blob) continue;
@@ -2701,19 +2767,20 @@ async function loadDraft(id) {
         let im;
         try { im = await loadImg(url); } catch (e) { URL.revokeObjectURL(url); continue; }
         im._url = url;
-        p = makePhoto(im, m.w || im.naturalWidth, m.h || im.naturalHeight, m.name, false, m.time ? new Date(m.time) : null, m.id);
+        p = makePhoto(im, m.w || im.naturalWidth, m.h || im.naturalHeight, m.name, false, m.time ? new Date(m.time) : null, m.id, next);
         p.blob = blob;
       }
       p.timeSrc = m.timeSrc || p.timeSrc || null;
       if (m.lat != null && m.lon != null) { p.lat = m.lat; p.lon = m.lon; }
       if (m.place) p.place = m.place; if (m.cc) p.cc = m.cc;
     }
-    const st = data.state, have = id => S.photos.has(id);
+    const st = data.state, have = id => next.has(id);
     if (!(st.active || []).some(have)) throw new Error('no photos');
     let tree = st.tree;
     (st.active || []).filter(pid => !have(pid)).forEach(pid => { tree = removeLeaf(tree, pid); });
-    S.tree = tree; S.active = st.active.filter(have);
-    S.crops = Object.assign(S.crops, st.crops || {}); S.caps = st.caps || {};
+    const oldPhotos = S.photos;
+    S.photos = next; S.tree = tree; S.active = st.active.filter(have);
+    S.crops = Object.assign({}, ...[...next.keys()].map(pid => ({ [pid]: { z: 1, fx: .5, fy: .5 } })), st.crops || {}); S.caps = st.caps || {};
     S.hero = have(st.hero) ? st.hero : null; S.preset = st.preset || null;
     S.set = Object.assign(clone(DEFAULT_SET), st.set || {}, { border: Object.assign({}, DEFAULT_SET.border, (st.set || {}).border) });
     photoSeq = Math.max(photoSeq, maxSeq + 1, (data.seq && data.seq.photo) || 0);
@@ -2727,7 +2794,7 @@ async function loadDraft(id) {
     generateLayouts(); refreshAll(); resolvePlaces();
     return true;
   } catch (e) {
-    dropPhotos(S.photos); S.photos = oldPhotos; S.crops = oldCrops;
+    if (S.photos !== next) dropPhotos(next);
     toast('That collage couldn’t be opened.'); return false;
   } finally { DR.loading = false; busy(null); }
 }
@@ -2856,11 +2923,12 @@ function moveToSection(pid, v) {
   if (v === 'new') {
     const cap = imageMode() ? MAX_FRAMES : MAX_SECS;
     if (root.secs.length >= cap) { toast(imageMode() ? `Up to ${cap} images.` : `Up to ${cap} sections.`); syncCellPane(); return; }
-    to = { id: nodeSeq++, key: imageMode() ? `img:new${nodeSeq}` : null, name: imageMode() ? '' : `Day ${root.secs.length + 1}`, note: '', autoNote: '', pids: [], tree: null };
+    const name = imageMode() ? '' : `Day ${root.secs.length + 1}`;
+    to = { id: nodeSeq++, key: imageMode() ? `img:new${nodeSeq}` : null, name, autoName: name, note: '', autoNote: '', pids: [], tree: null };
     root.secs.splice(fromI + 1, 0, to);
   } else { to = root.secs[+v]; if (!to || to === from) return; }
   from.tree = removeLeaf(from.tree, pid);
-  to.pids = leavesOf(to.tree).map(l => l.pid).concat(pid); to.tree = null;
+  to.pids = leavesOf(to.tree).map(l => l.pid).concat(pid); to.tree = null; root.manual = true;
   if (!from.tree) root.secs = root.secs.filter(s => s !== from);
   regenSections([to], false);
   commit(); fitStage(); syncControls(); syncCellPane(); if (tab === 'layout') renderOrderStrip();
@@ -2894,12 +2962,19 @@ async function addFiles(files) {
   const take = list.slice(0, room);
   busy(`Adding ${take.length} photo${take.length > 1 ? 's' : ''}…`);
   const added = []; let failed = 0;
-  for (const f of take) { try { added.push(await loadPhoto(f)); } catch (err) { failed++; } }
+  for (const [i, f] of take.entries()) {
+    if (take.length > 3) busy(`Adding photos… ${i + 1} of ${take.length}`);
+    try { added.push(await loadPhoto(f)); } catch (err) { failed++; }
+  }
+  // Grouping by place needs the new photos' places first, or they'd be grouped as if they had none.
+  const byPlace = imageMode() ? S.set.splitBy === 'place' : hasSecs() && S.set.secBy === 'place';
+  if (byPlace && added.some(p => p.lat != null)) { busy('Finding places…'); await resolvePlaces(); }
   busy(null);
   if (!added.length) { toast('Those photos couldn’t be opened. Try JPEG or PNG.'); return; }
   const hadSamples = S.active.some(id => S.photos.get(id).sample);
   S.active = real.concat(added.map(p => p.id));
   if (hadSamples) { S.caps = {}; S.hero = null; }
+  const rebuilt = hasSecs() && !!S.tree.manual, unit = imageMode() || dims().slides ? 'Images' : 'Sections';
   select(null);
   arrangeAll();
   commit(); refreshAll();
@@ -2907,6 +2982,8 @@ async function addFiles(files) {
   let msg = `Added ${added.length} photo${added.length > 1 ? 's' : ''}`;
   if (failed) msg += ` · ${failed} couldn’t be opened`;
   if (list.length > take.length) msg += ` · limit is ${MAX_PHOTOS}`;
+  // Adding photos arranges everything again, so say so when that undid the user's own moves.
+  if (rebuilt && hasSecs()) { toast(`${msg}. ${unit} rebuilt for the new photos; Undo to go back.`, 4500); return; }
   toast(msg);
 }
 async function replaceSelected(file) {
@@ -2963,7 +3040,8 @@ function initSaver() {
   return saverReady;
 }
 function updateSaveUI() {
-  const n = saveItems.length, many = n > 1, app = !!(saver && saver.share), kind = saver && saver.kind;
+  // While rendering, label the button for the images on their way rather than the last batch.
+  const n = rendering ? (dims().slides || 1) : saveItems.length, many = n > 1, app = !!(saver && saver.share), kind = saver && saver.kind;
   const U = S.set.format === 'carousel' ? 'slides' : 'images';
   $('#saveBtn').hidden = !saver;
   $('#shareBtn').hidden = !app;
@@ -3007,14 +3085,16 @@ async function exportImages(mult) {
 }
 async function refreshSave() {
   const token = ++saveToken, prev = $('#savePrev');
-  rendering = true; $('#saveSpin').hidden = false; $('#saveBtn').disabled = $('#shareBtn').disabled = true; $('#saveMeta').textContent = 'Rendering…';
+  rendering = true; $('#saveSpin').hidden = false; updateSaveUI(); $('#saveMeta').textContent = 'Rendering…';
   $$('img, .save-strip', prev).forEach(el => { el.style.opacity = .35; });
-  const items = await exportImages(saveMult);
+  let items;
+  try { items = await exportImages(saveMult); }
+  catch (e) { console.warn('export failed', e); items = [{ blob: null }]; } // e.g. the phone ran out of canvas memory
   if (token !== saveToken) return;
   rendering = false;
   saveItems.forEach(it => URL.revokeObjectURL(it.url));
   $$('img, .save-strip', prev).forEach(el => el.remove());
-  if (items.some(it => !it.blob)) { saveItems = []; $('#saveMeta').textContent = 'This size is too large for this device. Try Standard.'; $('#saveSpin').hidden = true; updateSaveUI(); return; }
+  if (items.some(it => !it.blob)) { saveItems = []; $('#saveMeta').textContent = saveMult > 1 ? 'This size is too large for this device. Try Standard.' : 'This couldn’t be rendered on this device. Close other apps and try again.'; $('#saveSpin').hidden = true; updateSaveUI(); return; }
   saveItems = items.map(it => Object.assign(it, { url: URL.createObjectURL(it.blob) }));
   if (saveItems.length === 1) { const im = document.createElement('img'); im.className = 'one'; im.alt = 'Your finished collage'; im.src = saveItems[0].url; prev.appendChild(im); }
   else { const strip = document.createElement('div'); strip.className = 'save-strip'; saveItems.forEach((it, i) => { const im = document.createElement('img'); im.alt = `Slide ${i + 1}`; im.src = it.url; strip.appendChild(im); }); prev.appendChild(strip); }
@@ -3176,7 +3256,7 @@ stage.addEventListener('pointerdown', e => { if (e.target === stage) select(null
 if (window.ResizeObserver) new ResizeObserver(() => fitStage()).observe(stage); else window.addEventListener('resize', fitStage);
 
 /* ================= start ================= */
-if (/[?&]debug\b/.test(location.search)) window.__gs = { S, DR, store, HIST, fitShape, leavesOf, geom: () => lastGeom, kpx };
+if (/[?&]debug\b/.test(location.search)) window.__gs = { S, DR, store, HIST, fitShape, leavesOf, geom: () => lastGeom, kpx, dims, sigFull, secIndexOf, viewOff: () => viewOff, render: d => renderView(!!d) };
 buildFormatStrip(); buildColourPane(); buildFontStrip();
 S.active = makeSamples();
 generateLayouts(); applyCand(0, false);
