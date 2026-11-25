@@ -109,7 +109,7 @@ const S = {
     scrapGap: 34, scrapMargin: 56, mess: .6, frame: 16, tape: true,
     strips: 0, filmTilt: .15, sprockets: true, edgeText: true,
     look: 'none', lookAmt: .8, exposure: 0, contrast: 0, warmth: 0, saturation: 0, fade: 0,
-    grain: .2, vignette: 0, leak: 0, dust: 0, dateStamp: false, date: todayISO(), dateFmt: 'yy', dateAuto: true, secBy: 'day',
+    grain: .2, vignette: 0, leak: 0, dust: 0, dateStamp: false, date: todayISO(), dateFmt: 'uk', dateAuto: true, secBy: 'day',
     perImage: 0, splitBy: 'order', // split into several images of up to perImage photos (0 = all in one)
     title: '', subtitle: '', titleFont: 'serif', titlePos: 'top', textAlign: 'center', titleSize: 1, textColor: 'auto',
     secHeads: true, capStyle: 'tag',
@@ -583,6 +583,10 @@ function scoreTree(tree, asp, CA, slides, hero) {
     }
   }
   let score = (loss + pen) / cells.length;
+  // The thinnest cell counts in full, however many photos there are: averaged in with the rest, one
+  // sliver among 90 photos would hardly register.
+  const side = Math.sqrt(mean), thin = Math.min(...cells.map(c => Math.min(c.w, c.h))) / side;
+  if (thin < .5) score += (.5 - thin) * 4;
   if (hero) {
     const hc = cells.find(c => c.pid === hero);
     if (hc) {
@@ -1176,7 +1180,10 @@ function drawLine(ctx, text, spec, px, x, y, align, maxW) {
 function dateText(d) {
   let v = d ? isoDay(d) : (/^\d{4}-\d{2}-\d{2}$/.test(S.set.date || '') ? S.set.date : todayISO());
   const [Y, M, D] = v.split('-'), yy = Y.slice(2);
-  return S.set.dateFmt === 'us' ? `${M} ${D} '${yy}` : S.set.dateFmt === 'dot' ? `${D}.${M}.${yy}` : `'${yy} ${M} ${D}`;
+  // uk: day month year, the default. yy: year first, like Japanese film cameras. Collages saved before
+  // 'uk' existed carry their own choice.
+  const f = S.set.dateFmt;
+  return f === 'us' ? `${M} ${D} '${yy}` : f === 'dot' ? `${D}.${M}.${yy}` : f === 'yy' ? `'${yy} ${M} ${D}` : `${D} ${M} '${yy}`;
 }
 function fxVignette(ctx, x, y, w, h, a) {
   ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.scale(w / 2, h / 2);
@@ -3256,7 +3263,7 @@ stage.addEventListener('pointerdown', e => { if (e.target === stage) select(null
 if (window.ResizeObserver) new ResizeObserver(() => fitStage()).observe(stage); else window.addEventListener('resize', fitStage);
 
 /* ================= start ================= */
-if (/[?&]debug\b/.test(location.search)) window.__gs = { S, DR, store, HIST, fitShape, leavesOf, geom: () => lastGeom, kpx, dims, sigFull, secIndexOf, viewOff: () => viewOff, render: d => renderView(!!d) };
+if (/[?&]debug\b/.test(location.search)) window.__gs = { S, DR, store, HIST, fitShape, leavesOf, geom: () => lastGeom, kpx, dims, sigFull, secIndexOf, dateText, viewOff: () => viewOff, render: d => renderView(!!d) };
 buildFormatStrip(); buildColourPane(); buildFontStrip();
 S.active = makeSamples();
 generateLayouts(); applyCand(0, false);
