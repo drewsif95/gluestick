@@ -112,7 +112,7 @@ const S = {
     grain: .2, vignette: 0, leak: 0, dust: 0, dateStamp: false, date: todayISO(), dateFmt: 'uk', dateAuto: true, secBy: 'day',
     perImage: 0, splitBy: 'order', // split into several images of up to perImage photos (0 = all in one)
     title: '', subtitle: '', titleFont: 'serif', titlePos: 'top', textAlign: 'center', titleSize: 1, textColor: 'auto',
-    secHeads: true, capStyle: 'tag',
+    secHeads: true, capStyle: 'tag', placeLabels: false,
     seed: 3
   },
   preset: null // layout carried over from a favourite: { shape } or { secs: 'day' | 'place' }
@@ -1180,10 +1180,15 @@ function drawLine(ctx, text, spec, px, x, y, align, maxW) {
 function dateText(d) {
   let v = d ? isoDay(d) : (/^\d{4}-\d{2}-\d{2}$/.test(S.set.date || '') ? S.set.date : todayISO());
   const [Y, M, D] = v.split('-'), yy = Y.slice(2);
-  // uk: day month year, the default. yy: year first, like Japanese film cameras. Collages saved before
-  // 'uk' existed carry their own choice.
+  // uk: day month year, the default. ymd: year first, like Japanese film cameras.
   const f = S.set.dateFmt;
-  return f === 'us' ? `${M} ${D} '${yy}` : f === 'dot' ? `${D}.${M}.${yy}` : f === 'yy' ? `'${yy} ${M} ${D}` : `${D} ${M} '${yy}`;
+  return f === 'us' ? `${M} ${D} '${yy}` : f === 'dot' ? `${D}.${M}.${yy}` : f === 'ymd' ? `'${yy} ${M} ${D}` : `${D} ${M} '${yy}`;
+}
+// Settings saved before 25 Nov have dateFmt 'yy': year first was the default then, not a choice anyone
+// made, so it becomes day, month, year. (Year first chosen now is stored as 'ymd'.)
+function upgradeSet(set) {
+  if (set && set.dateFmt === 'yy') set.dateFmt = 'uk';
+  return set;
 }
 function fxVignette(ctx, x, y, w, h, a) {
   ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.scale(w / 2, h / 2);
@@ -1241,7 +1246,9 @@ function drawPhotoFx(ctx, pid, x, y, w, h, seed) {
   if (st.leak > .001) fxLeak(ctx, x, y, w, h, st.leak, seed);
   if (st.dust > .001) fxDust(ctx, x, y, w, h, st.dust, seed);
   if (st.dateStamp) fxDate(ctx, x, y, w, h, pid);
-  const cap = (S.caps[pid] || '').trim(); if (cap) fxCaption(ctx, x, y, w, h, cap);
+  // A caption you type wins; otherwise the place label, when it's on and the photo has a place.
+  const p = S.photos.get(pid), cap = (S.caps[pid] || '').trim() || (st.placeLabels && p && p.place) || '';
+  if (cap) fxCaption(ctx, x, y, w, h, cap);
 }
 function polyPath(ctx, poly) { ctx.beginPath(); ctx.moveTo(poly[0][0], poly[0][1]); for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]); ctx.closePath(); }
 function rrSub(ctx, x, y, w, h, r) {
@@ -1997,6 +2004,9 @@ function renderPhotoStrip() {
   }
   $('#metaNote').textContent = note; $('#metaNote').hidden = !note;
   const dn = $('#dateNote');
+  const pn = $('#placeNote'), placed = real.filter(p => p.place).length;
+  if (pn) pn.textContent = !S.set.placeLabels || !real.length ? '' : placed === real.length ? `All ${real.length} photos have a place. A caption you type (Text › Captions) replaces it.`
+    : placed ? `${placed} of ${real.length} photos have a place. Type captions for the rest in Text › Captions.` : real.some(p => p.lat != null && p.place === undefined) ? 'Finding places…' : 'These photos don’t include a location. Type captions instead in Text › Captions.';
   if (dn) dn.textContent = !real.length ? '' : dated === real.length ? `All ${real.length} photos have their date.` : dated ? `${dated} of ${real.length} photos have their date; the rest use the date above.` : 'These photos don’t include a date, so the stamp uses the date above.';
 }
 function renderLayoutStrip() {
@@ -2600,7 +2610,7 @@ function favName() {
 function applySettings(set) {
   const before = [S.set.format, S.set.slides, S.set.slideRatio, S.set.sizing].join('|'), split = [S.set.perImage, S.set.splitBy].join('|');
   const keep = {}; FAV_SKIP.forEach(k => { keep[k] = S.set[k]; });
-  const next = Object.assign({}, S.set, clone(set), keep);
+  const next = upgradeSet(Object.assign({}, S.set, clone(set), keep));
   if (set.border) next.border = Object.assign({}, S.set.border, set.border);
   S.set = next;
   if ([S.set.perImage, S.set.splitBy].join('|') !== split) {
@@ -2789,7 +2799,7 @@ async function loadDraft(id) {
     S.photos = next; S.tree = tree; S.active = st.active.filter(have);
     S.crops = Object.assign({}, ...[...next.keys()].map(pid => ({ [pid]: { z: 1, fx: .5, fy: .5 } })), st.crops || {}); S.caps = st.caps || {};
     S.hero = have(st.hero) ? st.hero : null; S.preset = st.preset || null;
-    S.set = Object.assign(clone(DEFAULT_SET), st.set || {}, { border: Object.assign({}, DEFAULT_SET.border, (st.set || {}).border) });
+    S.set = upgradeSet(Object.assign(clone(DEFAULT_SET), st.set || {}, { border: Object.assign({}, DEFAULT_SET.border, (st.set || {}).border) }));
     photoSeq = Math.max(photoSeq, maxSeq + 1, (data.seq && data.seq.photo) || 0);
     nodeSeq = Math.max(nodeSeq, maxNodeId(S.tree) + 1, (data.seq && data.seq.node) || 0);
     dropPhotos(oldPhotos);
@@ -3170,6 +3180,7 @@ $$('.seg[data-seg]').forEach(seg => {
   }));
 });
 $$('input[type=checkbox][data-flag]').forEach(c => c.addEventListener('change', () => { S.set[c.dataset.flag] = c.checked; activeFav = null; scheduleRender(false); commit(); }));
+$('#placeLabels').addEventListener('change', () => { renderPhotoStrip(); if (S.set.placeLabels) resolvePlaces(); });
 $('#dateIn').addEventListener('change', e => { if (e.target.value) { S.set.date = e.target.value; S.set.dateStamp = true; syncControls(); scheduleRender(false); commit(); } });
 $$('#lookSub button').forEach(b => b.addEventListener('click', () => { lookSub = b.dataset.v; syncControls(); }));
 $$('#textSub button').forEach(b => b.addEventListener('click', () => { textSub = b.dataset.v; renderTextPane(); }));
